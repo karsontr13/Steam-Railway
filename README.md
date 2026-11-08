@@ -5,7 +5,7 @@
 *(Note: This project is in active development.*
 
 
-#⚠️**Warning:** This mod changes the terrain on the island: Closed passages will now be open; destroyed bridges will be repaired; and most of the train cars that were stranded on the tracks will no longer be there. Back up your save files!
+# ⚠️**Warning:** This mod changes the terrain on the island: Closed passages will now be open; destroyed bridges will be repaired; and most of the train cars that were stranded on the tracks will no longer be there. Back up your save files!
 
 ---
 
