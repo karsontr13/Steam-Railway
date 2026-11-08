@@ -17,7 +17,7 @@
 *   *If you light the stove without water in the pot, the "plug" will melt and the stove will go out. If the plug burns, you can repair it using the tool box inside the cabinet. The same applies to the pot itself.
 
 *   **Using the Train:** When you light the stove with water in the boiler, wait a while. Once steam starts to build up, release the steam brake on the right and the handbrake at the rear. Then, adjust the gear lever on the left forward/backward and           adjust your speed by increasing or decreasing the lever in the middle. The faster you go, the faster the steam will run out. The small valve on the left draws water from the tank into the boiler, while the valve on the right increases the heat,            allowing steam to build up faster, but this will wear out the safety valve and the boiler more quickly.
-*   
+
 ### ⚙️ Installation Guide
 
 1.  Ensure you have **MelonLoader** installed on your PC.
