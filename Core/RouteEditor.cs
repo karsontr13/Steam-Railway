@@ -1,0 +1,60 @@
+using Il2Cpp;
+using UnityEngine;
+
+namespace SteamRailway
+{
+    /// In-game route authoring. Walk along where the track should go and drop points:
+    ///   F6  start a new route in this scene        F8  add a point at the player's feet
+    ///   F7  remove the last point                  F9  rebuild tracks and trains in this scene
+    ///   F10 write routes.json
+    internal static class RouteEditor
+    {
+        static RouteData s_Active;
+
+        public static void Update()
+        {
+            string scene = RailwayManager.CurrentScene;
+            if (scene == null) return;
+
+            if (Input.GetKeyDown(KeyCode.F6)) NewRoute(scene);
+            if (Input.GetKeyDown(KeyCode.F8)) AddPoint(scene);
+            if (Input.GetKeyDown(KeyCode.F7)) RemoveLastPoint();
+            if (Input.GetKeyDown(KeyCode.F9))
+            {
+                RouteStore.Save(); // a rebuilt route is always kept, even if F10 is forgotten
+                RailwayManager.Rebuild();
+            }
+            if (Input.GetKeyDown(KeyCode.F10)) RouteStore.Save();
+        }
+
+        static void NewRoute(string scene)
+        {
+            var routes = RouteStore.GetOrCreateRoutes(scene);
+            s_Active = new RouteData { Id = $"{scene}_{routes.Count + 1}" };
+            routes.Add(s_Active);
+            SteamRailwayMod.Log.Msg($"New route '{s_Active.Id}'. Walk the line and press F8 to drop points.");
+        }
+
+        static void AddPoint(string scene)
+        {
+            if (s_Active == null)
+            {
+                var routes = RouteStore.GetRoutes(scene);
+                if (routes != null && routes.Count > 0) s_Active = routes[routes.Count - 1];
+                else NewRoute(scene);
+            }
+            var player = GameManager.GetPlayerObject();
+            if (player == null) return;
+            var p = TrackBuilder.SnapToTerrain(player.transform.position);
+            s_Active.AddPoint(p);
+            SteamRailwayMod.Log.Msg($"'{s_Active.Id}' point {s_Active.Points.Count}: {p}");
+        }
+
+        static void RemoveLastPoint()
+        {
+            if (s_Active == null || s_Active.Points.Count == 0) return;
+            s_Active.Points.RemoveAt(s_Active.Points.Count - 1);
+            SteamRailwayMod.Log.Msg($"'{s_Active.Id}' now has {s_Active.Points.Count} point(s).");
+        }
+    }
+}
