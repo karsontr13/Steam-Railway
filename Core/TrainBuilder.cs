@@ -1,4 +1,4 @@
-﻿using Il2Cpp;
+using Il2Cpp;
 using Il2CppFluffyUnderware.Curvy;
 using Il2CppFluffyUnderware.Curvy.Controllers;
 using Il2CppTLD.Gameplay;
@@ -48,52 +48,52 @@ namespace SteamRailway
         {
             var root = new GameObject(NamePrefix + guid);
             root.SetActive(false);
-            var R = root.transform;
+            var rootTransform = root.transform;
 
-            var model = LocomotiveModel.Spawn(R);
-            s_Root = R;
+            var model = LocomotiveModel.Spawn(rootTransform);
+            s_Root = rootTransform;
             s_Model = model != null ? model.transform : null;
-            if (s_Model == null) BuildPlaceholderBody(R, bodyMat);
+            if (s_Model == null) BuildPlaceholderBody(rootTransform, bodyMat);
 
-            var sc = root.AddComponent<SplineController>();
-            sc.Spline = spline;
-            sc.PositionMode = CurvyPositionMode.WorldUnits;
-            sc.Position = Mathf.Clamp(splinePos, 0f, spline.Length);
-            sc.OrientationMode = OrientationModeEnum.Tangent;
-            sc.OrientationAxis = OrientationAxisEnum.Forward; // without this the train stands on its nose
+            var splineController = root.AddComponent<SplineController>();
+            splineController.Spline = spline;
+            splineController.PositionMode = CurvyPositionMode.WorldUnits;
+            splineController.Position = Mathf.Clamp(splinePos, 0f, spline.Length);
+            splineController.OrientationMode = OrientationModeEnum.Tangent;
+            splineController.OrientationAxis = OrientationAxisEnum.Forward; // without this the train stands on its nose
             // the engine always faces the line's +direction; running in reverse must not turn it round
-            sc.IgnoreDirection = true;
-            sc.Clamping = CurvyClamping.Clamp;
-            sc.Speed = 0f;
+            splineController.IgnoreDirection = true;
+            splineController.Clamping = CurvyClamping.Clamp;
+            splineController.Speed = 0f;
 
-            var tr = root.AddComponent<SteamTrain>();
-            tr.m_SplineController = sc;
-            tr.m_AssetReference = new AssetReferenceGameObject(TrainConfig.AssetKey);
-            tr.m_TrainBoardedState = H.St();
-            tr.m_TrainUnboardedState = H.St();
-            tr.m_SteamWhistleToot = H.Ev();
+            var train = root.AddComponent<SteamTrain>();
+            train.m_SplineController = splineController;
+            train.m_AssetReference = new AssetReferenceGameObject(TrainConfig.AssetKey);
+            train.m_TrainBoardedState = H.St();
+            train.m_TrainUnboardedState = H.St();
+            train.m_SteamWhistleToot = H.Ev();
 
-            BuildCabin(R, tr);
-            BuildColliders(R, tr);
-            var comps = H.Child(R, "Components", H.V(0, 2.5f, -1f)).transform;
-            var engine = BuildEngine(comps, tr);
-            BuildBoiler(comps, R, tr, guid);
-            BuildWearComponents(comps, tr);
-            BuildTanks(comps, tr);
-            BuildCockpit(R, tr);
-            BuildEffects(R, tr);
-            BuildDoor(R, tr, engine, bodyMat);
-            BuildCabinStorage(R, tr, guid);
-            BuildControls(R, tr, engine, bodyMat);
-            tr.m_FleeTriggerVolume = H.Child(R, "Flee", Vector3.zero).AddComponent<AiFleeTriggerVolume>();
+            BuildCabin(rootTransform, train);
+            BuildColliders(rootTransform, train);
+            var comps = H.Child(rootTransform, "Components", H.V(0, 2.5f, -1f)).transform;
+            var engine = BuildEngine(comps, train);
+            BuildBoiler(comps, rootTransform, train, guid);
+            BuildWearComponents(comps, train);
+            BuildTanks(comps, train);
+            BuildCockpit(rootTransform, train);
+            BuildEffects(rootTransform, train);
+            BuildDoor(rootTransform, train, engine, bodyMat);
+            BuildCabinStorage(rootTransform, train, guid);
+            BuildControls(rootTransform, train, engine, bodyMat);
+            train.m_FleeTriggerVolume = H.Child(rootTransform, "Flee", Vector3.zero).AddComponent<AiFleeTriggerVolume>();
 
             ObjectGuid.MaybeAttachObjectGuidAddOrReplace(root, guid);
             root.SetActive(true);
 
-            tr.m_WaterSource.Set(H.Vol(TrainConfig.WaterCapacityUnits));
-            tr.m_FuelSource.Set(H.Vol(TrainConfig.FuelTokenUnits));
-            ConfigureEffects(tr);
-            return tr;
+            train.m_WaterSource.Set(H.Vol(TrainConfig.WaterCapacityUnits));
+            train.m_FuelSource.Set(H.Vol(TrainConfig.FuelTokenUnits));
+            ConfigureEffects(train);
+            return train;
         }
 
         static Transform s_Root, s_Model;
@@ -101,161 +101,161 @@ namespace SteamRailway
         /// Position of a model socket in train space (see Docs/LOKOMOTIF.md), or the placeholder layout without a model.
         static Vector3 At(string socket, Vector3 fallback)
         {
-            var t = LocomotiveModel.FindDeep(s_Model, socket);
-            return t != null ? s_Root.InverseTransformPoint(t.position) : fallback;
+            var transform = LocomotiveModel.FindDeep(s_Model, socket);
+            return transform != null ? s_Root.InverseTransformPoint(transform.position) : fallback;
         }
 
         static bool HasModel => s_Model != null;
 
-        static void BuildPlaceholderBody(Transform R, Material mat)
+        static void BuildPlaceholderBody(Transform rootTransform, Material material)
         {
-            H.Cube(R, "Body", H.V(0, 1.2f, 0), H.V(2.6f, 0.3f, 9f), mat, true);
-            H.Cube(R, "CabRoof", H.V(0, 4.2f, -2.5f), H.V(2.6f, 0.15f, 3.5f), mat, false);
-            H.Cube(R, "BoilerShell", H.V(0, 2.3f, 2.2f), H.V(1.6f, 1.6f, 4.6f), mat, false);
-            H.Cube(R, "Chimney", H.V(0, 3.6f, 3.8f), H.V(0.5f, 1.2f, 0.5f), mat, false);
+            H.Cube(rootTransform, "Body", H.V(0, 1.2f, 0), H.V(2.6f, 0.3f, 9f), material, true);
+            H.Cube(rootTransform, "CabRoof", H.V(0, 4.2f, -2.5f), H.V(2.6f, 0.15f, 3.5f), material, false);
+            H.Cube(rootTransform, "BoilerShell", H.V(0, 2.3f, 2.2f), H.V(1.6f, 1.6f, 4.6f), material, false);
+            H.Cube(rootTransform, "Chimney", H.V(0, 3.6f, 3.8f), H.V(0.5f, 1.2f, 0.5f), material, false);
         }
 
-        static void BuildCabin(Transform R, SteamTrain tr)
+        static void BuildCabin(Transform rootTransform, SteamTrain train)
         {
             // The player is not parented to the train: each frame the game copies the player's position to
             // CameraDummy, which is the player's FEET, walking inside CabinLimits.
             var floor = At("Socket_CabFloor", TrainConfig.CabinFloor);
-            var dummy = H.Child(R, "CameraDummy", floor);
+            var dummy = H.Child(rootTransform, "CameraDummy", floor);
             var sway = dummy.AddComponent<SimpleSway>();
             var offset = new MinMax(); offset.m_Min = 0f; offset.m_Max = 1f;
             sway.m_RandomTimeOffset = offset;
             sway.m_SwayPeriod = 4f; sway.m_SwayHalfAngle = 0.5f; sway.m_SwayMultiplier = 1f; sway.m_Direction = H.V(0, 0, 1);
 
-            var cabin = H.Child(R, "CabinLimits", floor).AddComponent<BoxCollider>();
+            var cabin = H.Child(rootTransform, "CabinLimits", floor).AddComponent<BoxCollider>();
             cabin.size = TrainConfig.CabinSize;
             cabin.isTrigger = true;
 
-            tr.m_CameraDummy = dummy.transform;
-            tr.m_CameraSimpleSway = sway;
-            tr.m_CabinLimits = cabin;
-            tr.m_MovementSpeed = 2f;
+            train.m_CameraDummy = dummy.transform;
+            train.m_CameraSimpleSway = sway;
+            train.m_CabinLimits = cabin;
+            train.m_MovementSpeed = 2f;
 
             var curve = new AnimationCurve();
             curve.AddKey(0f, 0f); curve.AddKey(0.5f, 0.02f); curve.AddKey(1f, 0f);
-            tr.m_VerticalCameraMotionPattern = curve;
-            tr.m_CameraMotionPatternLengthSeconds = 5f;
-            tr.m_CameraMotionDamper = 0.125f;
-            tr.m_LurchDamper = 0.2f;
-            tr.m_FadeInSeconds = 0.5f;
-            tr.m_FadeOutSeconds = 0.5f;
-            tr.m_FootstepBaseDistanceMultiplier = 0.65f;
-            tr.m_PlayerEnterTrainEventName = "event_EnterTrain";
-            tr.m_PlayerExitTrainEventName = "event_ExitTrain";
+            train.m_VerticalCameraMotionPattern = curve;
+            train.m_CameraMotionPatternLengthSeconds = 5f;
+            train.m_CameraMotionDamper = 0.125f;
+            train.m_LurchDamper = 0.2f;
+            train.m_FadeInSeconds = 0.5f;
+            train.m_FadeOutSeconds = 0.5f;
+            train.m_FootstepBaseDistanceMultiplier = 0.65f;
+            train.m_PlayerEnterTrainEventName = "event_EnterTrain";
+            train.m_PlayerExitTrainEventName = "event_ExitTrain";
         }
 
-        static void BuildColliders(Transform R, SteamTrain tr)
+        static void BuildColliders(Transform rootTransform, SteamTrain train)
         {
-            tr.m_FrontCollider = MakeTrainCollider(R, "FrontCollider", At("Socket_Front", H.V(0, 1.5f, 7.4f)), tr);
-            tr.m_RearCollider = MakeTrainCollider(R, "RearCollider", At("Socket_Rear", H.V(0, 1.5f, -4.8f)), tr);
-            tr.m_LowRamSpeedThreshold = 7f;
-            tr.m_HighRamSpeedThreshold = 12f;
+            train.m_FrontCollider = MakeTrainCollider(rootTransform, "FrontCollider", At("Socket_Front", H.V(0, 1.5f, 7.4f)), train);
+            train.m_RearCollider = MakeTrainCollider(rootTransform, "RearCollider", At("Socket_Rear", H.V(0, 1.5f, -4.8f)), train);
+            train.m_LowRamSpeedThreshold = 7f;
+            train.m_HighRamSpeedThreshold = 12f;
         }
 
-        static TrainCarCollider MakeTrainCollider(Transform R, string name, Vector3 pos, SteamTrain tr)
+        static TrainCarCollider MakeTrainCollider(Transform rootTransform, string name, Vector3 position, SteamTrain train)
         {
-            var go = H.Child(R, name, pos);
-            go.AddComponent<Rigidbody>().isKinematic = true;
-            var box = go.AddComponent<BoxCollider>();
+            var targetObject = H.Child(rootTransform, name, position);
+            targetObject.AddComponent<Rigidbody>().isKinematic = true;
+            var box = targetObject.AddComponent<BoxCollider>();
             box.isTrigger = true;
             box.size = H.V(2.4f, 2f, 0.6f);
-            var c = go.AddComponent<TrainCarCollider>();
-            c.m_ParentTrainCar = tr;
-            c.m_BoxCollider = box;
-            return c;
+            var carCollider = targetObject.AddComponent<TrainCarCollider>();
+            carCollider.m_ParentTrainCar = train;
+            carCollider.m_BoxCollider = box;
+            return carCollider;
         }
 
-        static SteamTrainEngine BuildEngine(Transform comps, SteamTrain tr)
+        static SteamTrainEngine BuildEngine(Transform comps, SteamTrain train)
         {
-            var e = H.Child(comps, "Engine", Vector3.zero).AddComponent<SteamTrainEngine>();
-            e.m_SteamTrain = tr;
-            e.m_SteamPSI = H.Rtpc(); e.m_TrainVelocity = H.Rtpc(); e.m_FireboxExplosionEvent = H.Ev();
-            e.m_EngineStateNormal = H.St(); e.m_EngineStateOverfire = H.St();
-            e.m_EngineStateExplosionRiskLow = H.St(); e.m_EngineStateExplosionRiskHigh = H.St(); e.m_AudioLastEngineState = H.St();
-            e.m_OverfireStartEvent = new UnityEvent(); e.m_OverfireEndEvent = new UnityEvent();
+            var engine = H.Child(comps, "Engine", Vector3.zero).AddComponent<SteamTrainEngine>();
+            engine.m_SteamTrain = train;
+            engine.m_SteamPSI = H.Rtpc(); engine.m_TrainVelocity = H.Rtpc(); engine.m_FireboxExplosionEvent = H.Ev();
+            engine.m_EngineStateNormal = H.St(); engine.m_EngineStateOverfire = H.St();
+            engine.m_EngineStateExplosionRiskLow = H.St(); engine.m_EngineStateExplosionRiskHigh = H.St(); engine.m_AudioLastEngineState = H.St();
+            engine.m_OverfireStartEvent = new UnityEvent(); engine.m_OverfireEndEvent = new UnityEvent();
 
-            e.m_MinSteamPressureForLowSpeedMovement = 25; e.m_MinSteamPressureForHighSpeedMovement = 26;
-            e.m_MaxSteamPressure = 300; e.m_OverfireMaxSteamPressure = 400; e.m_OverfireBonusMaxSpeedPercent = 15;
-            e.m_MaxVelocityReverse = -8; e.m_MaxVelocityForwardLow = 8; e.m_MaxVelocityForwardHigh = 15;
-            e.m_MinBrakeVelocityDecreasePerSecond = 1.25f; e.m_MaxBrakeVelocityDecreasePerSecond = 3;
-            e.m_VelocityDecreasePerSecondNeutral = 0.5f; e.m_VelocityDecreaseInsufficientSteamPSI = 0.8f; e.m_VelocityDecreasePerSecondDownshift = 0.5f;
-            e.m_VelocityIncreasePerSecondReverse = -1; e.m_VelocityIncreasePerSecondForwardLow = 1; e.m_VelocityIncreasePerSecondForwardHigh = 1.75f;
-            e.m_MaxReverseSpeedToAllowShiftGearUp = -2; e.m_MaxForwardSpeedToAllowShiftGearDown = 2;
-            e.m_SteamPSIBuiltPerSecond = 7;
-            e.m_SteamPressurePSIConsumedPerSecondReverse = 5; e.m_SteamPressurePSIConsumedPerSecondForwardLow = 5;
-            e.m_SteamPressurePSIConsumedPerSecondForwardHigh = 14; e.m_SteamPressurePSIConsumedPerBrakeSecond = 0.5f;
-            tr.m_Engine = e;
-            return e;
+            engine.m_MinSteamPressureForLowSpeedMovement = 25; engine.m_MinSteamPressureForHighSpeedMovement = 26;
+            engine.m_MaxSteamPressure = 300; engine.m_OverfireMaxSteamPressure = 400; engine.m_OverfireBonusMaxSpeedPercent = 15;
+            engine.m_MaxVelocityReverse = -8; engine.m_MaxVelocityForwardLow = 8; engine.m_MaxVelocityForwardHigh = 15;
+            engine.m_MinBrakeVelocityDecreasePerSecond = 1.25f; engine.m_MaxBrakeVelocityDecreasePerSecond = 3;
+            engine.m_VelocityDecreasePerSecondNeutral = 0.5f; engine.m_VelocityDecreaseInsufficientSteamPSI = 0.8f; engine.m_VelocityDecreasePerSecondDownshift = 0.5f;
+            engine.m_VelocityIncreasePerSecondReverse = -1; engine.m_VelocityIncreasePerSecondForwardLow = 1; engine.m_VelocityIncreasePerSecondForwardHigh = 1.75f;
+            engine.m_MaxReverseSpeedToAllowShiftGearUp = -2; engine.m_MaxForwardSpeedToAllowShiftGearDown = 2;
+            engine.m_SteamPSIBuiltPerSecond = 7;
+            engine.m_SteamPressurePSIConsumedPerSecondReverse = 5; engine.m_SteamPressurePSIConsumedPerSecondForwardLow = 5;
+            engine.m_SteamPressurePSIConsumedPerSecondForwardHigh = 14; engine.m_SteamPressurePSIConsumedPerBrakeSecond = 0.5f;
+            train.m_Engine = engine;
+            return engine;
         }
 
-        static void BuildBoiler(Transform comps, Transform R, SteamTrain tr, string guid)
+        static void BuildBoiler(Transform comps, Transform rootTransform, SteamTrain train, string guid)
         {
-            var b = H.Child(comps, "Boiler", H.V(0, 0, 1)).AddComponent<SteamTrainBoiler>();
-            SetupComponent(b, tr, "GAMEPLAY_Boiler");
-            b.m_MaxTemperature = 350; b.m_TemperatureChangePerMinute = 600; b.m_AmbientHeatTemperature = 20;
-            b.m_AmbientHeatHourStoredPerHourOn = 0.2f; b.m_MaxAmbientHeatHoursStored = 3; b.m_ExplosionCheckIntervalSeconds = 10;
-            b.m_LowRiskMaxCondition = 49; b.m_LowRiskExplosionChance = 50; b.m_HighRiskMaxCondition = 24; b.m_HighRiskExplosionChance = 75;
-            b.m_OverfireDamagePerHour = 100;
-            b.m_WaterBoiledPerMinute = H.Vol(TrainConfig.WaterBoiledPerMinute);
-            b.m_FuelBurnedPerMinute = H.Vol(0L);
-            b.m_ExplosionEvent = new UnityEvent();
-            b.m_BoilerTemperature = H.Rtpc(); b.m_BoilerStateOn = H.St(); b.m_BoilerStateOff = H.St();
-            b.m_FurnaceLights = H.Arr(H.Child(b.transform, "FurnaceLight", Vector3.zero));
-            b.m_FurnaceParticlesParent = H.Child(b.transform, "FurnaceParticles", Vector3.zero);
-            b.m_InvisibleFire = AddFireboxStove(R, guid);
-            tr.m_Boiler = b;
+            var boiler = H.Child(comps, "Boiler", H.V(0, 0, 1)).AddComponent<SteamTrainBoiler>();
+            SetupComponent(boiler, train, "GAMEPLAY_Boiler");
+            boiler.m_MaxTemperature = 350; boiler.m_TemperatureChangePerMinute = 600; boiler.m_AmbientHeatTemperature = 20;
+            boiler.m_AmbientHeatHourStoredPerHourOn = 0.2f; boiler.m_MaxAmbientHeatHoursStored = 3; boiler.m_ExplosionCheckIntervalSeconds = 10;
+            boiler.m_LowRiskMaxCondition = 49; boiler.m_LowRiskExplosionChance = 50; boiler.m_HighRiskMaxCondition = 24; boiler.m_HighRiskExplosionChance = 75;
+            boiler.m_OverfireDamagePerHour = 100;
+            boiler.m_WaterBoiledPerMinute = H.Vol(TrainConfig.WaterBoiledPerMinute);
+            boiler.m_FuelBurnedPerMinute = H.Vol(0L);
+            boiler.m_ExplosionEvent = new UnityEvent();
+            boiler.m_BoilerTemperature = H.Rtpc(); boiler.m_BoilerStateOn = H.St(); boiler.m_BoilerStateOff = H.St();
+            boiler.m_FurnaceLights = H.Arr(H.Child(boiler.transform, "FurnaceLight", Vector3.zero));
+            boiler.m_FurnaceParticlesParent = H.Child(boiler.transform, "FurnaceParticles", Vector3.zero);
+            boiler.m_InvisibleFire = AddFireboxStove(rootTransform, guid);
+            train.m_Boiler = boiler;
         }
 
         /// The firebox is the base game's pot belly stove, hidden behind the fire hole: clicking the fire doors opens
         /// the game's own fire menus (start fire / add fuel) and the stove's Fire is what heats the boiler.
         /// Only its invisible click box at the doors, its warmth and its fire sound remain.
-        static Fire AddFireboxStove(Transform R, string trainGuid)
+        static Fire AddFireboxStove(Transform rootTransform, string trainGuid)
         {
             var prefab = H.LoadAsset<GameObject>(TrainConfig.StovePrefab);
             if (prefab == null) return null;
             var stove = Object.Instantiate(prefab);
             stove.SetActive(false);
             stove.name = "Firebox";
-            stove.transform.SetParent(R, false);
+            stove.transform.SetParent(rootTransform, false);
             stove.transform.localPosition = At("Socket_Firebox", TrainConfig.FireboxPos);
             stove.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
-            foreach (var og in stove.GetComponentsInChildren<ObjectGuid>(true))
-                og.SetRuntimeCachedPdid(trainGuid + "_" + og.gameObject.name);
+            foreach (var objectGuid in stove.GetComponentsInChildren<ObjectGuid>(true))
+                objectGuid.SetRuntimeCachedPdid(trainGuid + "_" + objectGuid.gameObject.name);
 
             // Hide the stove's meshes and its own lights (our firelight comes out of the fire hole). Its fire effect
             // (flames, embers, sparks) stays and is moved onto the grate inside the fire hole.
-            foreach (var r in stove.GetComponentsInChildren<Renderer>(true))
-                if (r.TryCast<ParticleSystemRenderer>() == null) r.enabled = false;
+            foreach (var renderer in stove.GetComponentsInChildren<Renderer>(true))
+                if (renderer.TryCast<ParticleSystemRenderer>() == null) renderer.enabled = false;
             var fireT = stove.GetComponentInChildren<Fire>(true)?.transform;
             if (fireT != null)
             {
-                fireT.position = R.TransformPoint(At("Socket_FireFX", H.V(0f, 1.86f, -1.79f)));
-                fireT.rotation = R.rotation;
+                fireT.position = rootTransform.TransformPoint(At("Socket_FireFX", H.V(0f, 1.86f, -1.79f)));
+                fireT.rotation = rootTransform.rotation;
                 fireT.localScale = Vector3.one * TrainConfig.FireFxScale;
             }
-            foreach (var ps in stove.GetComponentsInChildren<ParticleSystem>(true))
+            foreach (var particleSystem in stove.GetComponentsInChildren<ParticleSystem>(true))
             {
-                var main = ps.main;
+                var main = particleSystem.main;
                 main.simulationSpace = ParticleSystemSimulationSpace.Local;   // otherwise flames trail behind the moving train
                 main.scalingMode = ParticleSystemScalingMode.Hierarchy;       // follow the fire's scale to fit the fire hole
             }
-            foreach (var l in stove.GetComponentsInChildren<Light>(true)) l.gameObject.SetActive(false);
-            var lod = stove.GetComponent<LODGroup>();
-            if (lod != null) lod.enabled = false;
+            foreach (var light in stove.GetComponentsInChildren<Light>(true)) light.gameObject.SetActive(false);
+            var lodGroup = stove.GetComponent<LODGroup>();
+            if (lodGroup != null) lodGroup.enabled = false;
             // No cooking or placing items on the firebox.
             foreach (var name in new[] { "Cylinder", "GearPlacePoint", "PlacePoints", "GearExclusionCollider" })
             {
-                var t = LocomotiveModel.FindDeep(stove.transform, name);
-                if (t != null) t.gameObject.SetActive(false);
+                var hiddenPart = LocomotiveModel.FindDeep(stove.transform, name);
+                if (hiddenPart != null) hiddenPart.gameObject.SetActive(false);
             }
-            foreach (var c in stove.GetComponentsInChildren<Collider>(true))
-                if (!c.isTrigger) c.enabled = false;
-            var ws = stove.GetComponent<WoodStove>();
-            if (ws != null) ws.m_CookingSlots = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<CookingSlot>(0);
+            foreach (var collider in stove.GetComponentsInChildren<Collider>(true))
+                if (!collider.isTrigger) collider.enabled = false;
+            var woodStove = stove.GetComponent<WoodStove>();
+            if (woodStove != null) woodStove.m_CookingSlots = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<CookingSlot>(0);
             // The click box covers the fire doors.
             var box = stove.AddComponent<BoxCollider>();
             box.size = HasModel ? H.V(0.62f, 0.46f, 0.14f) : H.V(0.5f, 0.4f, 0.2f);
@@ -266,143 +266,143 @@ namespace SteamRailway
             return fire;
         }
 
-        static void BuildWearComponents(Transform comps, SteamTrain tr)
+        static void BuildWearComponents(Transform comps, SteamTrain train)
         {
             var wheels = H.Child(comps, "Wheels", H.V(0, -1.5f, 0)).AddComponent<SteamTrainWheels>();
-            SetupComponent(wheels, tr, "GAMEPLAY_Wheels");
+            SetupComponent(wheels, train, "GAMEPLAY_Wheels");
             var tiers = new Il2CppSystem.Collections.Generic.List<SteamTrainWheels.PerformanceTier>();
             int[] threshold = { 75, 50, 25, 0 };
             float[] speed = { 1f, 0.9f, 0.75f, 0.5f };
             float[] consumption = { 1f, 1.1f, 1.25f, 1.5f };
-            for (int i = 0; i < threshold.Length; i++)
+            for (int index = 0; index < threshold.Length; index++)
             {
-                var t = new SteamTrainWheels.PerformanceTier();
-                t.m_ConditionThreshold = threshold[i]; t.m_MaxVelocityIncreaseModifier = speed[i]; t.m_OilConsumedModifier = consumption[i];
-                tiers.Add(t);
+                var tier = new SteamTrainWheels.PerformanceTier();
+                tier.m_ConditionThreshold = threshold[index]; tier.m_MaxVelocityIncreaseModifier = speed[index]; tier.m_OilConsumedModifier = consumption[index];
+                tiers.Add(tier);
             }
             wheels.m_PerformanceTiers = tiers;
-            tr.m_Wheels = wheels;
+            train.m_Wheels = wheels;
 
             var brake = H.Child(comps, "BrakeShoe", H.V(0.8f, -1.5f, 0)).AddComponent<SteamTrainBrakeShoe>();
-            SetupComponent(brake, tr, "GAMEPLAY_BrakeShoes");
-            tr.m_BrakeShoe = brake;
+            SetupComponent(brake, train, "GAMEPLAY_BrakeShoes");
+            train.m_BrakeShoe = brake;
 
             var cow = H.Child(comps, "CowCatcher", H.V(0, -1.5f, 7f)).AddComponent<SteamTrainCowCatcher>();
-            SetupComponent(cow, tr, "GAMEPLAY_CowCatcher");
-            tr.m_CowCatcher = cow;
+            SetupComponent(cow, train, "GAMEPLAY_CowCatcher");
+            train.m_CowCatcher = cow;
 
             var cook = H.Child(comps, "CookingSurface", H.V(-0.6f, 0, -2f)).AddComponent<SteamTrainCookingSurface>();
-            SetupComponent(cook, tr, "GAMEPLAY_CookingSurface");
+            SetupComponent(cook, train, "GAMEPLAY_CookingSurface");
             cook.m_GearPlacePoints = new Il2CppSystem.Collections.Generic.List<GearPlacePoint>();
             cook.m_PendingDeserialization = new Il2CppSystem.Collections.Generic.List<SteamTrainCookingSurface.CookingSurfaceState>();
-            tr.m_CookingSurface = cook;
+            train.m_CookingSurface = cook;
         }
 
-        static void BuildTanks(Transform comps, SteamTrain tr)
+        static void BuildTanks(Transform comps, SteamTrain train)
         {
             var fuel = H.Child(comps, "FuelSource", Vector3.zero).AddComponent<GenericLiquidContainer>();
             fuel.m_VolumeRTPC = H.Rtpc();
             fuel.m_MaxCapacity = H.Vol(TrainConfig.FuelTokenUnits * 2);
-            tr.m_FuelSource = fuel;
+            train.m_FuelSource = fuel;
 
             var water = H.Child(comps, "WaterSource", Vector3.zero).AddComponent<GenericLiquidContainer>();
             water.m_VolumeRTPC = H.Rtpc();
             water.m_MaxCapacity = H.Vol(TrainConfig.WaterCapacityUnits);
-            tr.m_WaterSource = water;
+            train.m_WaterSource = water;
         }
 
-        static void BuildCockpit(Transform R, SteamTrain tr)
+        static void BuildCockpit(Transform rootTransform, SteamTrain train)
         {
-            var ck = H.Child(R, "Cockpit", H.V(0, 2.5f, -1.2f)).AddComponent<SteamTrainCockpit>();
-            var t = ck.transform;
-            ck.m_SteamGaugePSINeedlePivot = H.Child(t, "PsiNeedle", Vector3.zero).transform;
-            ck.m_SpeedometerNeedlePivot = H.Child(t, "SpeedNeedle", Vector3.zero).transform;
-            ck.m_GearLeverPivot = H.Child(t, "GearLever", Vector3.zero).transform;
-            ck.m_GearGaugePivot = H.Child(t, "GearGauge", Vector3.zero).transform;
-            ck.m_BrakeLeverPivot = H.Child(t, "BrakeLever", Vector3.zero).transform;
-            ck.m_BrakeGaugePivot = H.Child(t, "BrakeGauge", Vector3.zero).transform;
-            ck.m_WaterTankGauge = H.Child(t, "WaterGauge", Vector3.zero).transform;
-            ck.m_OilTankGauge = H.Child(t, "FuelGauge", Vector3.zero).transform;
-            ck.m_LightRoot = H.Child(t, "Lights", Vector3.zero);
-            ck.m_MaxSteamPSINeedleAngle = 120; ck.m_MaxSpeedometerNeedAngle = 95;
-            ck.m_GearLeverMoveSpeed = 50; ck.m_GearGaugeMoveRatio = 6;
-            ck.m_GearLeverAngleNeutral = -10; ck.m_GearLeverAngleLow = -20; ck.m_GearLeverAngleHigh = -30;
-            ck.m_BrakeLeverMoveSpeed = 300; ck.m_BrakeGaugeMoveRatio = 2; ck.m_BrakeGaugeAngleOffset = 180; ck.m_BrakeLeverAngleOn = -90;
-            ck.m_FullTankOffset = 0.1f;
-            tr.m_Cockpit = ck;
+            var cockpit = H.Child(rootTransform, "Cockpit", H.V(0, 2.5f, -1.2f)).AddComponent<SteamTrainCockpit>();
+            var cockpitTransform = cockpit.transform;
+            cockpit.m_SteamGaugePSINeedlePivot = H.Child(cockpitTransform, "PsiNeedle", Vector3.zero).transform;
+            cockpit.m_SpeedometerNeedlePivot = H.Child(cockpitTransform, "SpeedNeedle", Vector3.zero).transform;
+            cockpit.m_GearLeverPivot = H.Child(cockpitTransform, "GearLever", Vector3.zero).transform;
+            cockpit.m_GearGaugePivot = H.Child(cockpitTransform, "GearGauge", Vector3.zero).transform;
+            cockpit.m_BrakeLeverPivot = H.Child(cockpitTransform, "BrakeLever", Vector3.zero).transform;
+            cockpit.m_BrakeGaugePivot = H.Child(cockpitTransform, "BrakeGauge", Vector3.zero).transform;
+            cockpit.m_WaterTankGauge = H.Child(cockpitTransform, "WaterGauge", Vector3.zero).transform;
+            cockpit.m_OilTankGauge = H.Child(cockpitTransform, "FuelGauge", Vector3.zero).transform;
+            cockpit.m_LightRoot = H.Child(cockpitTransform, "Lights", Vector3.zero);
+            cockpit.m_MaxSteamPSINeedleAngle = 120; cockpit.m_MaxSpeedometerNeedAngle = 95;
+            cockpit.m_GearLeverMoveSpeed = 50; cockpit.m_GearGaugeMoveRatio = 6;
+            cockpit.m_GearLeverAngleNeutral = -10; cockpit.m_GearLeverAngleLow = -20; cockpit.m_GearLeverAngleHigh = -30;
+            cockpit.m_BrakeLeverMoveSpeed = 300; cockpit.m_BrakeGaugeMoveRatio = 2; cockpit.m_BrakeGaugeAngleOffset = 180; cockpit.m_BrakeLeverAngleOn = -90;
+            cockpit.m_FullTankOffset = 0.1f;
+            train.m_Cockpit = cockpit;
         }
 
-        static void BuildEffects(Transform R, SteamTrain tr)
+        static void BuildEffects(Transform rootTransform, SteamTrain train)
         {
-            var whistle = H.Child(R, "Whistle", At("Socket_SafetyValve", H.V(0, 4.5f, 0)));
-            tr.m_SteamWhistleParent = whistle;
-            tr.m_SteamWhistleLightParticleSystem = H.Child(whistle.transform, "SteamLight", Vector3.zero).AddComponent<ParticleSystem>();
-            tr.m_SteamWhistleDenseParticleSystem = H.Child(whistle.transform, "SteamDense", Vector3.zero).AddComponent<ParticleSystem>();
-            tr.m_SteamWhistleTootLengthSeconds = 1.6f;
+            var whistle = H.Child(rootTransform, "Whistle", At("Socket_SafetyValve", H.V(0, 4.5f, 0)));
+            train.m_SteamWhistleParent = whistle;
+            train.m_SteamWhistleLightParticleSystem = H.Child(whistle.transform, "SteamLight", Vector3.zero).AddComponent<ParticleSystem>();
+            train.m_SteamWhistleDenseParticleSystem = H.Child(whistle.transform, "SteamDense", Vector3.zero).AddComponent<ParticleSystem>();
+            train.m_SteamWhistleTootLengthSeconds = 1.6f;
 
-            var smoke = H.Child(R, "ChimneySmoke", At("Socket_Chimney", TrainConfig.ChimneyTop)).AddComponent<ParticleSystem>();
-            tr.m_SmokeStackParticleSystems = H.Arr(smoke);
-            tr.m_MinEmissionOverTimeRate = 40;
-            tr.m_MaxEmissionOverTimeRate = 100;
+            var smoke = H.Child(rootTransform, "ChimneySmoke", At("Socket_Chimney", TrainConfig.ChimneyTop)).AddComponent<ParticleSystem>();
+            train.m_SmokeStackParticleSystems = H.Arr(smoke);
+            train.m_MinEmissionOverTimeRate = 40;
+            train.m_MaxEmissionOverTimeRate = 100;
         }
 
-        static void ConfigureEffects(SteamTrain tr)
+        static void ConfigureEffects(SteamTrain train)
         {
             var smokeMat = H.LoadAsset<Material>(TrainConfig.SmokeMaterial);
             var steamMat = H.LoadAsset<Material>(TrainConfig.SteamMaterial);
 
-            var smoke = tr.m_SmokeStackParticleSystems[0];
+            var smoke = train.m_SmokeStackParticleSystems[0];
             smoke.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
-            var m = smoke.main;
-            m.simulationSpace = ParticleSystemSimulationSpace.World; // smoke should trail behind the train
-            m.startLifetime = new ParticleSystem.MinMaxCurve(6f);
-            m.startSpeed = new ParticleSystem.MinMaxCurve(2.2f);
-            m.startSize = new ParticleSystem.MinMaxCurve(2.2f);
-            m.startColor = new ParticleSystem.MinMaxGradient(new Color(0.25f, 0.24f, 0.23f, 0.6f));
-            m.maxParticles = 400;
+            var mainModule = smoke.main;
+            mainModule.simulationSpace = ParticleSystemSimulationSpace.World; // smoke should trail behind the train
+            mainModule.startLifetime = new ParticleSystem.MinMaxCurve(6f);
+            mainModule.startSpeed = new ParticleSystem.MinMaxCurve(2.2f);
+            mainModule.startSize = new ParticleSystem.MinMaxCurve(2.2f);
+            mainModule.startColor = new ParticleSystem.MinMaxGradient(new Color(0.25f, 0.24f, 0.23f, 0.6f));
+            mainModule.maxParticles = 400;
             var shape = smoke.shape; shape.shapeType = ParticleSystemShapeType.Cone; shape.angle = 12f; shape.radius = 0.25f;
             smoke.GetComponent<ParticleSystemRenderer>().sharedMaterial = smokeMat;
             smoke.Play();
 
-            ConfigureSteam(tr.m_SteamWhistleLightParticleSystem, steamMat);
-            ConfigureSteam(tr.m_SteamWhistleDenseParticleSystem, steamMat);
+            ConfigureSteam(train.m_SteamWhistleLightParticleSystem, steamMat);
+            ConfigureSteam(train.m_SteamWhistleDenseParticleSystem, steamMat);
         }
 
-        static void ConfigureSteam(ParticleSystem ps, Material mat)
+        static void ConfigureSteam(ParticleSystem particleSystem, Material material)
         {
-            var m = ps.main;
-            m.simulationSpace = ParticleSystemSimulationSpace.World;
-            m.startLifetime = new ParticleSystem.MinMaxCurve(1.5f);
-            m.startSpeed = new ParticleSystem.MinMaxCurve(4f);
-            m.startSize = new ParticleSystem.MinMaxCurve(0.6f);
-            m.playOnAwake = false;
-            var shape = ps.shape; shape.shapeType = ParticleSystemShapeType.Cone; shape.angle = 8f; shape.radius = 0.05f;
-            ps.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
-            ps.GetComponent<ParticleSystemRenderer>().sharedMaterial = mat;
-            ps.Stop();
+            var mainModule = particleSystem.main;
+            mainModule.simulationSpace = ParticleSystemSimulationSpace.World;
+            mainModule.startLifetime = new ParticleSystem.MinMaxCurve(1.5f);
+            mainModule.startSpeed = new ParticleSystem.MinMaxCurve(4f);
+            mainModule.startSize = new ParticleSystem.MinMaxCurve(0.6f);
+            mainModule.playOnAwake = false;
+            var shape = particleSystem.shape; shape.shapeType = ParticleSystemShapeType.Cone; shape.angle = 8f; shape.radius = 0.05f;
+            particleSystem.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
+            particleSystem.GetComponent<ParticleSystemRenderer>().sharedMaterial = material;
+            particleSystem.Stop();
         }
 
-        static void BuildDoor(Transform R, SteamTrain tr, SteamTrainEngine engine, Material mat)
+        static void BuildDoor(Transform rootTransform, SteamTrain train, SteamTrainEngine engine, Material material)
         {
             int interactiveLayer = LayerMask.NameToLayer("InteractiveProp");
-            var door = H.Child(R, "Door", At("Socket_Door_R", TrainConfig.DoorPos));
+            var door = H.Child(rootTransform, "Door", At("Socket_Door_R", TrainConfig.DoorPos));
             door.layer = interactiveLayer;
             // The model's cab has an open side entrance; the door is an invisible collider filling it.
-            if (!HasModel) H.Cube(door.transform, "DoorPanel", Vector3.zero, H.V(0.08f, 1.9f, 0.9f), mat, false);
+            if (!HasModel) H.Cube(door.transform, "DoorPanel", Vector3.zero, H.V(0.08f, 1.9f, 0.9f), material, false);
             door.AddComponent<BoxCollider>().size = HasModel ? H.V(0.2f, 1.8f, 0.85f) : H.V(0.15f, 1.9f, 0.9f);
 
-            var exit = H.Child(R, "ExitPoint", At("Socket_Exit_R", TrainConfig.ExitPos));
+            var exit = H.Child(rootTransform, "ExitPoint", At("Socket_Exit_R", TrainConfig.ExitPos));
             exit.transform.localRotation = Quaternion.Euler(0f, 90f, 0f);
 
             // The Lock must exist before the door's Awake looks for it.
-            var lk = door.AddComponent<Lock>();
-            lk.m_ChanceLocked = 0f;
-            lk.m_LockState = LockState.Unlocked;
-            lk.m_LockStateRolled = true;
-            lk.m_LockedKeypadText = H.Loc("GAMEPLAY_Locked");
+            var lockComponent = door.AddComponent<Lock>();
+            lockComponent.m_ChanceLocked = 0f;
+            lockComponent.m_LockState = LockState.Unlocked;
+            lockComponent.m_LockStateRolled = true;
+            lockComponent.m_LockedKeypadText = H.Loc("GAMEPLAY_Locked");
 
             var d = door.AddComponent<SteamTrainDoor>();
-            d.m_ParentSteamTrain = tr;
+            d.m_ParentSteamTrain = train;
             d.m_ExitPoint = exit.transform;
             d.m_ObjectAnims = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<ObjectAnim>(0);
             d.m_SteamEngineEnter = H.Ev();
@@ -411,75 +411,75 @@ namespace SteamRailway
             d.m_DefaultHoldText = H.Loc("GAMEPLAY_Door");
             d.m_CanInteract = true;
             d.m_EventEntries = new Il2CppSystem.Collections.Generic.List<InteractionEventEntry>();
-            foreach (var ls in Object.FindObjectsOfType<LoadScene>())
-                if (ls.m_HUD != null) { d.m_HUD = ls.m_HUD; break; }
+            foreach (var loadScene in Object.FindObjectsOfType<LoadScene>())
+                if (loadScene.m_HUD != null) { d.m_HUD = loadScene.m_HUD; break; }
 
             // SteamTrainDoor.UpdateInteraction throws every frame without a door window.
             var windowGo = H.Child(door.transform, "DoorWindow", H.V(0, 0.5f, 0));
             var look = H.Child(windowGo.transform, "LookTarget", H.V(0.6f, 0, 0));
-            var w = windowGo.AddComponent<SteamTrainWindow>();
-            w.m_Train = tr; w.m_Engine = engine; w.m_Door = d; w.m_WindowLookTarget = look.transform;
-            w.m_ObjectAnims = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<ObjectAnim>(0);
-            w.m_LeanOutEvent = H.Ev(); w.m_LeanInEvent = H.Ev();
-            w.m_DefaultHoverText = H.Loc("GAMEPLAY_Window");
-            w.m_EventEntries = new Il2CppSystem.Collections.Generic.List<InteractionEventEntry>();
-            d.m_DoorWindow = w;
+            var window = windowGo.AddComponent<SteamTrainWindow>();
+            window.m_Train = train; window.m_Engine = engine; window.m_Door = d; window.m_WindowLookTarget = look.transform;
+            window.m_ObjectAnims = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<ObjectAnim>(0);
+            window.m_LeanOutEvent = H.Ev(); window.m_LeanInEvent = H.Ev();
+            window.m_DefaultHoverText = H.Loc("GAMEPLAY_Window");
+            window.m_EventEntries = new Il2CppSystem.Collections.Generic.List<InteractionEventEntry>();
+            d.m_DoorWindow = window;
 
             ObjectGuid.MaybeAttachObjectGuidAddOrReplace(door, System.Guid.NewGuid().ToString());
         }
 
         /// Cab levers and gauges (see CabControls). Two-way controls use SteamTrainGearLever (click / alternative click),
         /// one-way controls and gauges use SteamTrainBrakeLever. Positions are on the cab's front wall.
-        static void BuildControls(Transform R, SteamTrain tr, SteamTrainEngine engine, Material mat)
+        static void BuildControls(Transform rootTransform, SteamTrain train, SteamTrainEngine engine, Material material)
         {
             var lever = H.V(0.06f, 0.5f, 0.06f);
             var knob = H.V(0.12f, 0.12f, 0.08f);
             var gauge = H.V(0.18f, 0.18f, 0.04f);
-            bool m = HasModel;
+            bool matched = HasModel;
 
             // Colliders are invisible boxes sized to each modelled fitting so neighbours never overlap
             // (overlapping boxes made the hover texts of the regulator and the steam gauge swap).
-            TwoWay(R, tr, engine, mat, CabControls.Regulator, At("Socket_Regulator", H.V(0.5f, 2.6f, -1.45f)), m ? H.V(0.42f, 0.3f, 0.1f) : lever);
-            TwoWay(R, tr, engine, mat, CabControls.Reverser, At("Socket_Reverser", H.V(0.65f, 2.0f, -1.5f)), m ? H.V(0.14f, 0.5f, 0.2f) : lever);
-            OneWay(R, tr, engine, mat, CabControls.Brake, At("Socket_Brake", H.V(-0.55f, 2.2f, -1.5f)), m ? H.V(0.16f, 0.14f, 0.42f) : lever);
-            OneWay(R, tr, engine, mat, CabControls.HandBrake, At("Socket_HandBrake", H.V(-0.9f, 2.2f, -3.6f)), m ? H.V(0.36f, 0.14f, 0.36f) : knob);
-            OneWay(R, tr, engine, mat, CabControls.Injector, At("Socket_Injector", H.V(-0.65f, 2.75f, -1.45f)), m ? H.V(0.16f, 0.16f, 0.08f) : knob);
-            OneWay(R, tr, engine, mat, CabControls.Blower, At("Socket_Blower", H.V(0.3f, 3.0f, -1.45f)), m ? H.V(0.16f, 0.16f, 0.08f) : knob);
-            OneWay(R, tr, engine, mat, CabControls.PressureGauge, At("Socket_PressureGauge", H.V(-0.2f, 3.0f, -1.42f)), m ? H.V(0.36f, 0.36f, 0.06f) : gauge);
-            OneWay(R, tr, engine, mat, CabControls.SpeedGauge, At("Socket_SpeedGauge", H.V(0.2f, 3.0f, -1.42f)), m ? H.V(0.25f, 0.25f, 0.06f) : gauge);
-            OneWay(R, tr, engine, mat, CabControls.HeatGauge, At("Socket_HeatGauge", H.V(0f, 2.75f, -1.42f)), m ? H.V(0.18f, 0.18f, 0.06f) : gauge);
-            OneWay(R, tr, engine, mat, CabControls.WaterGlass, At("Socket_WaterGlass", H.V(-0.35f, 2.55f, -1.42f)), H.V(0.1f, 0.55f, 0.08f));
-            OneWay(R, tr, engine, mat, CabControls.TenderGauge, At("Socket_TenderGauge", H.V(0f, 2.6f, -3.75f)), m ? H.V(0.16f, 0.48f, 0.06f) : gauge);
-            OneWay(R, tr, engine, mat, CabControls.Pump, At("Socket_Pump", H.V(0.55f, 2.6f, -3.75f)), m ? H.V(0.16f, 0.16f, 0.08f) : knob);
-            OneWay(R, tr, engine, mat, CabControls.Repair, At("Socket_Repair", H.V(-0.55f, 2.6f, -3.75f)), m ? H.V(0.82f, 0.48f, 0.38f) : knob);
-            OneWay(R, tr, engine, mat, CabControls.Damper, At("Socket_Damper", H.V(0.52f, 1.8f, -2.0f)), H.V(0.3f, 0.26f, 0.1f));
-            OneWay(R, tr, engine, mat, CabControls.Headlight, At("Socket_HeadlightSwitch", H.V(-1.2f, 2.7f, -1.66f)), H.V(0.16f, 0.22f, 0.1f));
-            BuildFirebox(R, tr, mat);
-            BuildLamps(R);
+            TwoWay(rootTransform, train, engine, material, CabControls.Regulator, At("Socket_Regulator", H.V(0.5f, 2.6f, -1.45f)), matched ? H.V(0.42f, 0.3f, 0.1f) : lever);
+            TwoWay(rootTransform, train, engine, material, CabControls.Reverser, At("Socket_Reverser", H.V(0.65f, 2.0f, -1.5f)), matched ? H.V(0.14f, 0.5f, 0.2f) : lever);
+            OneWay(rootTransform, train, engine, material, CabControls.Brake, At("Socket_Brake", H.V(-0.55f, 2.2f, -1.5f)), matched ? H.V(0.16f, 0.14f, 0.42f) : lever);
+            OneWay(rootTransform, train, engine, material, CabControls.HandBrake, At("Socket_HandBrake", H.V(-0.9f, 2.2f, -3.6f)), matched ? H.V(0.36f, 0.14f, 0.36f) : knob);
+            OneWay(rootTransform, train, engine, material, CabControls.Injector, At("Socket_Injector", H.V(-0.65f, 2.75f, -1.45f)), matched ? H.V(0.16f, 0.16f, 0.08f) : knob);
+            OneWay(rootTransform, train, engine, material, CabControls.Blower, At("Socket_Blower", H.V(0.3f, 3.0f, -1.45f)), matched ? H.V(0.16f, 0.16f, 0.08f) : knob);
+            OneWay(rootTransform, train, engine, material, CabControls.PressureGauge, At("Socket_PressureGauge", H.V(-0.2f, 3.0f, -1.42f)), matched ? H.V(0.36f, 0.36f, 0.06f) : gauge);
+            OneWay(rootTransform, train, engine, material, CabControls.SpeedGauge, At("Socket_SpeedGauge", H.V(0.2f, 3.0f, -1.42f)), matched ? H.V(0.25f, 0.25f, 0.06f) : gauge);
+            OneWay(rootTransform, train, engine, material, CabControls.HeatGauge, At("Socket_HeatGauge", H.V(0f, 2.75f, -1.42f)), matched ? H.V(0.18f, 0.18f, 0.06f) : gauge);
+            OneWay(rootTransform, train, engine, material, CabControls.WaterGlass, At("Socket_WaterGlass", H.V(-0.35f, 2.55f, -1.42f)), H.V(0.1f, 0.55f, 0.08f));
+            OneWay(rootTransform, train, engine, material, CabControls.TenderGauge, At("Socket_TenderGauge", H.V(0f, 2.6f, -3.75f)), matched ? H.V(0.16f, 0.48f, 0.06f) : gauge);
+            OneWay(rootTransform, train, engine, material, CabControls.Pump, At("Socket_Pump", H.V(0.55f, 2.6f, -3.75f)), matched ? H.V(0.16f, 0.16f, 0.08f) : knob);
+            OneWay(rootTransform, train, engine, material, CabControls.Repair, At("Socket_Repair", H.V(-0.55f, 2.6f, -3.75f)), matched ? H.V(0.82f, 0.48f, 0.38f) : knob);
+            OneWay(rootTransform, train, engine, material, CabControls.Damper, At("Socket_Damper", H.V(0.52f, 1.8f, -2.0f)), H.V(0.3f, 0.26f, 0.1f));
+            OneWay(rootTransform, train, engine, material, CabControls.Headlight, At("Socket_HeadlightSwitch", H.V(-1.2f, 2.7f, -1.66f)), H.V(0.16f, 0.22f, 0.1f));
+            BuildFirebox(rootTransform, train, material);
+            BuildLamps(rootTransform);
 
             // Outside: water tank filler and the coal bunker's rear hatch (snow).
             var hatch = HasModel ? H.V(0.5f, 0.3f, 0.5f) : H.V(0.5f, 0.1f, 0.5f);
-            Outside(R, tr, mat, CabControls.WaterHatch, At("Socket_WaterHatch", H.V(-0.6f, 2.0f, -4.65f)), hatch);
-            Outside(R, tr, mat, CabControls.SnowHatch, At("Socket_SnowHatch", H.V(0.6f, 2.0f, -4.65f)), HasModel ? H.V(0.7f, 0.6f, 0.15f) : hatch);
+            Outside(rootTransform, train, material, CabControls.WaterHatch, At("Socket_WaterHatch", H.V(-0.6f, 2.0f, -4.65f)), hatch);
+            Outside(rootTransform, train, material, CabControls.SnowHatch, At("Socket_SnowHatch", H.V(0.6f, 2.0f, -4.65f)), HasModel ? H.V(0.7f, 0.6f, 0.15f) : hatch);
 
-            var horn = MakeCabControl(R, "Ctl_Whistle", At("Socket_Whistle", H.V(0f, 3.6f, -1.8f)), H.V(0.06f, 0.5f, 0.06f), mat).AddComponent<SteamTrainHorn>();
-            SetupCabControl(horn, tr, engine, "GAMEPLAY_Horn");
+            var horn = MakeCabControl(rootTransform, "Ctl_Whistle", At("Socket_Whistle", H.V(0f, 3.6f, -1.8f)), H.V(0.06f, 0.5f, 0.06f), material).AddComponent<SteamTrainHorn>();
+            SetupCabControl(horn, train, engine, "GAMEPLAY_Horn");
             horn.m_ObjectAnims = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<ObjectAnim>(0);
         }
 
         /// Headlamp on the smokebox and a lamp on the bunker back: a spot light down the line and a small glow
         /// in front of the lens (LocomotiveAnimator switches them).
-        static void BuildLamps(Transform R)
+        static void BuildLamps(Transform rootTransform)
         {
-            Lamp(R, "HeadLamp_Front", At("Socket_HeadLamp", H.V(0f, 3.95f, 6.43f)), 0f);
-            Lamp(R, "HeadLamp_Rear", At("Socket_RearLamp", H.V(0f, 3.1f, -5.74f)), 180f);
+            Lamp(rootTransform, "HeadLamp_Front", At("Socket_HeadLamp", H.V(0f, 3.95f, 6.43f)), 0f);
+            Lamp(rootTransform, "HeadLamp_Rear", At("Socket_RearLamp", H.V(0f, 3.1f, -5.74f)), 180f);
         }
 
-        static void Lamp(Transform R, string name, Vector3 pos, float yaw)
+        static void Lamp(Transform rootTransform, string name, Vector3 position, float yaw)
         {
-            var go = H.Child(R, name, pos);
-            go.transform.localRotation = Quaternion.Euler(4f, yaw, 0f);      // aimed a little down the track
-            var spot = go.AddComponent<Light>();
+            var targetObject = H.Child(rootTransform, name, position);
+            targetObject.transform.localRotation = Quaternion.Euler(4f, yaw, 0f);      // aimed a little down the track
+            var spot = targetObject.AddComponent<Light>();
             spot.type = LightType.Spot;
             spot.range = 70f;
             spot.spotAngle = 48f;
@@ -487,20 +487,20 @@ namespace SteamRailway
             spot.intensity = 0f;
             spot.shadows = LightShadows.None;
             spot.enabled = false;
-            var glow = H.Child(go.transform, "Glow", H.V(0f, 0f, 0.25f)).AddComponent<Light>();
+            var glow = H.Child(targetObject.transform, "Glow", H.V(0f, 0f, 0.25f)).AddComponent<Light>();
             glow.type = LightType.Point;
             glow.range = 1.3f;
             glow.color = spot.color;
             glow.intensity = 0f;
             glow.shadows = LightShadows.None;
             glow.enabled = false;
-            LampBeam.Create(go.transform);
+            LampBeam.Create(targetObject.transform);
         }
 
         /// The firelight that falls out of the fire hole into the cab (the warmth is the stove's own HeatSource).
-        static void BuildFirebox(Transform R, SteamTrain tr, Material mat)
+        static void BuildFirebox(Transform rootTransform, SteamTrain train, Material material)
         {
-            var heat = H.Child(R, "FireHeat", At("Socket_FireLight", H.V(0f, 2.0f, -1.7f)));
+            var heat = H.Child(rootTransform, "FireHeat", At("Socket_FireLight", H.V(0f, 2.0f, -1.7f)));
             var light = heat.AddComponent<Light>();
             light.type = LightType.Point;
             light.color = new Color(1f, 0.55f, 0.25f);
@@ -509,46 +509,46 @@ namespace SteamRailway
             light.shadows = LightShadows.None;
         }
 
-        static void TwoWay(Transform R, SteamTrain tr, SteamTrainEngine engine, Material mat, string name, Vector3 pos, Vector3 size)
+        static void TwoWay(Transform rootTransform, SteamTrain train, SteamTrainEngine engine, Material material, string name, Vector3 position, Vector3 size)
         {
-            var c = MakeCabControl(R, name, pos, size, mat).AddComponent<SteamTrainGearLever>();
-            SetupCabControl(c, tr, engine, name);
-            c.m_GearLeverUp = H.Ev(); c.m_GearLeverDown = H.Ev(); c.m_BrakesOnButPlayerTriedToShift = H.Ev();
+            var gearLever = MakeCabControl(rootTransform, name, position, size, material).AddComponent<SteamTrainGearLever>();
+            SetupCabControl(gearLever, train, engine, name);
+            gearLever.m_GearLeverUp = H.Ev(); gearLever.m_GearLeverDown = H.Ev(); gearLever.m_BrakesOnButPlayerTriedToShift = H.Ev();
         }
 
         /// Cab interactions only work from inside the train; tank intakes are the game's outside interactions.
-        static void Outside(Transform R, SteamTrain tr, Material mat, string name, Vector3 pos, Vector3 size)
+        static void Outside(Transform rootTransform, SteamTrain train, Material material, string name, Vector3 position, Vector3 size)
         {
-            var c = MakeCabControl(R, name, pos, size, mat).AddComponent<SteamTrainWaterTankIntake>();
-            c.m_Train = tr;
-            c.m_DefaultHoverText = H.Loc(name);
-            c.m_TransferName = H.Loc(name);
-            c.m_EventEntries = new Il2CppSystem.Collections.Generic.List<InteractionEventEntry>();
-            c.m_TransferLiquidAudioEvent = H.Ev();
+            var waterIntake = MakeCabControl(rootTransform, name, position, size, material).AddComponent<SteamTrainWaterTankIntake>();
+            waterIntake.m_Train = train;
+            waterIntake.m_DefaultHoverText = H.Loc(name);
+            waterIntake.m_TransferName = H.Loc(name);
+            waterIntake.m_EventEntries = new Il2CppSystem.Collections.Generic.List<InteractionEventEntry>();
+            waterIntake.m_TransferLiquidAudioEvent = H.Ev();
         }
 
-        static void OneWay(Transform R, SteamTrain tr, SteamTrainEngine engine, Material mat, string name, Vector3 pos, Vector3 size)
+        static void OneWay(Transform rootTransform, SteamTrain train, SteamTrainEngine engine, Material material, string name, Vector3 position, Vector3 size)
         {
-            var c = MakeCabControl(R, name, pos, size, mat).AddComponent<SteamTrainBrakeLever>();
-            SetupCabControl(c, tr, engine, name);
-            c.m_BrakeLeverOn = H.Ev(); c.m_BrakeLeverOff = H.Ev();
+            var brakeLever = MakeCabControl(rootTransform, name, position, size, material).AddComponent<SteamTrainBrakeLever>();
+            SetupCabControl(brakeLever, train, engine, name);
+            brakeLever.m_BrakeLeverOn = H.Ev(); brakeLever.m_BrakeLeverOff = H.Ev();
         }
 
-        static GameObject MakeCabControl(Transform R, string name, Vector3 pos, Vector3 size, Material mat)
+        static GameObject MakeCabControl(Transform rootTransform, string name, Vector3 position, Vector3 size, Material material)
         {
-            var go = H.Child(R, name, pos);
-            go.layer = LayerMask.NameToLayer("InteractiveProp");
-            if (!HasModel) H.Cube(go.transform, "Visual", Vector3.zero, size, mat, false);
-            go.AddComponent<BoxCollider>().size = size + H.V(0.1f, 0.1f, 0.1f);
-            return go;
+            var targetObject = H.Child(rootTransform, name, position);
+            targetObject.layer = LayerMask.NameToLayer("InteractiveProp");
+            if (!HasModel) H.Cube(targetObject.transform, "Visual", Vector3.zero, size, material, false);
+            targetObject.AddComponent<BoxCollider>().size = size + H.V(0.1f, 0.1f, 0.1f);
+            return targetObject;
         }
 
-        static void SetupCabControl(SteamTrainCabinInteraction c, SteamTrain tr, SteamTrainEngine engine, string locId)
+        static void SetupCabControl(SteamTrainCabinInteraction interaction, SteamTrain train, SteamTrainEngine engine, string locId)
         {
-            c.m_Train = tr;
-            c.m_Engine = engine;
-            c.m_DefaultHoverText = H.Loc(locId);
-            c.m_EventEntries = new Il2CppSystem.Collections.Generic.List<InteractionEventEntry>();
+            interaction.m_Train = train;
+            interaction.m_Engine = engine;
+            interaction.m_DefaultHoverText = H.Loc(locId);
+            interaction.m_EventEntries = new Il2CppSystem.Collections.Generic.List<InteractionEventEntry>();
         }
 
         static Vector3 s_StoragePos;
@@ -557,56 +557,56 @@ namespace SteamRailway
         /// Keeps the cupboard's container where it was built (anything that still moves it is undone).
         public static void PinStorage(Transform trainRoot)
         {
-            var t = trainRoot != null ? trainRoot.Find("CabinStorage") : null;
-            if (t == null) return;
-            if ((t.localPosition - s_StoragePos).sqrMagnitude > 1e-4f || Quaternion.Angle(t.localRotation, s_StorageRot) > 0.1f)
-                t.SetLocalPositionAndRotation(s_StoragePos, s_StorageRot);
+            var transform = trainRoot != null ? trainRoot.Find("CabinStorage") : null;
+            if (transform == null) return;
+            if ((transform.localPosition - s_StoragePos).sqrMagnitude > 1e-4f || Quaternion.Angle(transform.localRotation, s_StorageRot) > 0.1f)
+                transform.SetLocalPositionAndRotation(s_StoragePos, s_StorageRot);
             // the game's container code switches the trunk's colliders off every few seconds (its own meshes
             // are hidden): the cupboard's click box is kept on
-            var box = t.GetComponent<BoxCollider>();
+            var box = transform.GetComponent<BoxCollider>();
             if (box != null && !box.enabled) box.enabled = true;
         }
 
         /// SteamTrain.SerializeTrainCarData throws without a cabin container, so the cab gets a base-game trunk.
         /// Its contents are saved inside the train data; it starts empty and never rolls loot.
-        static void BuildCabinStorage(Transform R, SteamTrain tr, string trainGuid)
+        static void BuildCabinStorage(Transform rootTransform, SteamTrain train, string trainGuid)
         {
             var prefab = H.LoadAsset<GameObject>(TrainConfig.StoragePrefab);
             if (prefab == null) return;
             var trunk = Object.Instantiate(prefab);
             trunk.name = "CabinStorage";
-            trunk.transform.SetParent(R, false);
+            trunk.transform.SetParent(rootTransform, false);
             trunk.transform.localPosition = At("Socket_Storage", TrainConfig.StoragePos);
             trunk.transform.localRotation = HasModel ? Quaternion.identity : Quaternion.Euler(0f, 90f, 0f);
-            foreach (var og in trunk.GetComponentsInChildren<ObjectGuid>(true))
-                og.SetRuntimeCachedPdid(trainGuid + "_" + og.gameObject.name);
+            foreach (var objectGuid in trunk.GetComponentsInChildren<ObjectGuid>(true))
+                objectGuid.SetRuntimeCachedPdid(trainGuid + "_" + objectGuid.gameObject.name);
             // A base-game trunk is a decoration: the game may pick it up, break it down or put it back at a saved
             // place. Here it only serves as the cupboard's container.
-            foreach (var x in trunk.GetComponentsInChildren<DecorationItem>(true)) Object.Destroy(x);
-            foreach (var x in trunk.GetComponentsInChildren<Il2CppTLD.Placement.Placeable>(true)) Object.Destroy(x);
-            foreach (var x in trunk.GetComponentsInChildren<BreakDown>(true)) Object.Destroy(x);
+            foreach (var decoration in trunk.GetComponentsInChildren<DecorationItem>(true)) Object.Destroy(decoration);
+            foreach (var placeable in trunk.GetComponentsInChildren<Il2CppTLD.Placement.Placeable>(true)) Object.Destroy(placeable);
+            foreach (var breakDown in trunk.GetComponentsInChildren<BreakDown>(true)) Object.Destroy(breakDown);
             s_StoragePos = trunk.transform.localPosition;
             s_StorageRot = trunk.transform.localRotation;
 
-            var c = trunk.GetComponentInChildren<Container>(true);
-            if (c == null) return;
+            var container = trunk.GetComponentInChildren<Container>(true);
+            if (container == null) return;
             if (HasModel)
             {
                 // The model has a cupboard on the rear plate: the trunk only lends its Container and becomes an
                 // invisible click box the size of the cupboard (LocomotiveAnimator swings the cupboard door).
-                foreach (var r in trunk.GetComponentsInChildren<Renderer>(true)) r.enabled = false;
+                foreach (var renderer in trunk.GetComponentsInChildren<Renderer>(true)) renderer.enabled = false;
                 // The game picks the container from the object its own click collider sits on, so the new box goes
                 // on that object (same layer); the trunk's other solid colliders are switched off.
                 GameObject clickGo = null;
-                foreach (var col in trunk.GetComponentsInChildren<Collider>(true))
+                foreach (var collider in trunk.GetComponentsInChildren<Collider>(true))
                 {
-                    if (col.isTrigger) continue;
-                    if (clickGo == null) clickGo = col.gameObject;
-                    col.enabled = false;
+                    if (collider.isTrigger) continue;
+                    if (clickGo == null) clickGo = collider.gameObject;
+                    collider.enabled = false;
                 }
-                if (clickGo == null) clickGo = c.gameObject;
+                if (clickGo == null) clickGo = container.gameObject;
                 var box = clickGo.AddComponent<BoxCollider>();
-                var socket = R.TransformPoint(At("Socket_Storage", TrainConfig.StoragePos));
+                var socket = rootTransform.TransformPoint(At("Socket_Storage", TrainConfig.StoragePos));
                 box.center = clickGo.transform.InverseTransformPoint(socket);
                 var ls = clickGo.transform.lossyScale;
                 box.size = new Vector3(0.72f / Mathf.Max(ls.x, 0.01f), 0.6f / Mathf.Max(ls.y, 0.01f), 0.3f / Mathf.Max(ls.z, 0.01f));
@@ -614,26 +614,26 @@ namespace SteamRailway
                 // cab controls (the trunk's own layer is ignored while the player is in the cab).
                 clickGo.layer = LayerMask.NameToLayer("InteractiveProp");
                 SteamRailwayMod.Debug($"Cupboard click box on {clickGo.name} (layer {clickGo.layer}).");
-                c.m_LocalizedDisplayName = H.Loc("GAMEPLAY_Cupboard");
+                container.m_LocalizedDisplayName = H.Loc("GAMEPLAY_Cupboard");
             }
-            c.m_NotPopulated = false;
-            c.m_RolledSpawnChance = true;
-            c.m_ChanceEmpty = 100f;
-            c.m_MinRandomItems = 0;
-            c.m_MaxRandomItems = 0;
-            c.m_LootTablePrefab = null;
-            c.m_LootTableData = null;
-            c.m_LootTable = null;
-            if (c.m_GearToInstantiate != null) c.m_GearToInstantiate.Clear();
-            tr.m_Container = c;
+            container.m_NotPopulated = false;
+            container.m_RolledSpawnChance = true;
+            container.m_ChanceEmpty = 100f;
+            container.m_MinRandomItems = 0;
+            container.m_MaxRandomItems = 0;
+            container.m_LootTablePrefab = null;
+            container.m_LootTableData = null;
+            container.m_LootTable = null;
+            if (container.m_GearToInstantiate != null) container.m_GearToInstantiate.Clear();
+            train.m_Container = container;
         }
 
-        static void SetupComponent(SteamTrainComponent c, SteamTrain tr, string locId)
+        static void SetupComponent(SteamTrainComponent component, SteamTrain train, string locId)
         {
-            c.m_Train = tr;
-            c.m_DefaultHoverText = H.Loc(locId);
-            c.m_Description = H.Loc(locId + "Description");
-            c.m_RepairConfigurations = new Il2CppSystem.Collections.Generic.List<SteamTrainRepair>();
+            component.m_Train = train;
+            component.m_DefaultHoverText = H.Loc(locId);
+            component.m_Description = H.Loc(locId + "Description");
+            component.m_RepairConfigurations = new Il2CppSystem.Collections.Generic.List<SteamTrainRepair>();
         }
     }
 }

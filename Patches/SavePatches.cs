@@ -15,10 +15,10 @@ namespace SteamRailway.Patches
         private static void Postfix(Il2CppSystem.Collections.Generic.List<SavedTrainCarState> __result)
         {
             if (__result == null) return;
-            for (int i = __result.Count - 1; i >= 0; i--)
+            for (int index = __result.Count - 1; index >= 0; index--)
             {
-                var s = __result[i];
-                if (s != null && RailwayManager.IsOurGuid(s.m_Guid)) __result.RemoveAt(i);
+                var savedState = __result[index];
+                if (savedState != null && RailwayManager.IsOurGuid(savedState.m_Guid)) __result.RemoveAt(index);
             }
         }
     }
@@ -31,7 +31,7 @@ namespace SteamRailway.Patches
         private static IEnumerable<MethodBase> TargetMethods()
         {
             return typeof(SaveGameSlots).GetMethods(BindingFlags.Public | BindingFlags.Static)
-                .Where(m => m.Name == nameof(SaveGameSlots.WriteSlotToDisk));
+                .Where(method => method.Name == nameof(SaveGameSlots.WriteSlotToDisk));
         }
 
         private static void Prefix()

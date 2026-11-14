@@ -45,9 +45,9 @@ namespace SteamRailway
             }
             var player = GameManager.GetPlayerObject();
             if (player == null) return;
-            var p = TrackBuilder.SnapToTerrain(player.transform.position);
-            s_Active.AddPoint(p);
-            SteamRailwayMod.Log.Msg($"'{s_Active.Id}' point {s_Active.Points.Count}: {p}");
+            var point = TrackBuilder.SnapToTerrain(player.transform.position);
+            s_Active.AddPoint(point);
+            SteamRailwayMod.Log.Msg($"'{s_Active.Id}' point {s_Active.Points.Count}: {point}");
         }
 
         static void RemoveLastPoint()

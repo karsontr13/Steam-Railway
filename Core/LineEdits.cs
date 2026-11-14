@@ -19,12 +19,12 @@ namespace SteamRailway
 
         static List<Src> Sources(string scene, out LineFile auto, out CustomLineFile custom)
         {
-            var res = new List<Src>();
+            var results = new List<Src>();
             auto = OriginalRails.ReadLineFile(scene);
-            if (auto?.Lines != null) foreach (var l in auto.Lines) if (l.Points != null) res.Add(new Src { Pts = l.Points, Auto = l });
+            if (auto?.Lines != null) foreach (var lineData in auto.Lines) if (lineData.Points != null) results.Add(new Src { Pts = lineData.Points, Auto = lineData });
             custom = CustomLines.For(scene);
-            foreach (var l in custom.Lines) if (l.Points != null) res.Add(new Src { Pts = l.Points, Custom = l });
-            return res;
+            foreach (var customLine in custom.Lines) if (customLine.Points != null) results.Add(new Src { Pts = customLine.Points, Custom = customLine });
+            return results;
         }
 
         static void Save(string scene, LineFile auto, bool autoChanged, bool customChanged)
@@ -48,15 +48,15 @@ namespace SteamRailway
         }
 
         /// Is a line point on the built track between path metres s0 and s1 (its path metres in s)?
-        static bool In(BuiltTrack t, Vector3 p, float s0, float s1, out float s)
+        static bool In(BuiltTrack track, Vector3 point, float startArc, float endArc, out float arcLength)
         {
-            s = t.Path.NearestDistance(p, out float d);
-            return d <= OnLine && s >= s0 && s <= s1;
+            arcLength = track.Path.NearestDistance(point, out float distance);
+            return distance <= OnLine && arcLength >= startArc && arcLength <= endArc;
         }
 
         /// Removes the stretch [s0, s1] of a built track; the lines it was made of are split there.
         /// Returns how many line points were removed.
-        public static int Cut(string scene, BuiltTrack t, float s0, float s1)
+        public static int Cut(string scene, BuiltTrack track, float startArc, float endArc)
         {
             var srcs = Sources(scene, out var auto, out var custom);
             int removed = 0;
@@ -70,7 +70,7 @@ namespace SteamRailway
                 bool hit = false;
                 foreach (var q in src.Pts)
                 {
-                    if (In(t, CustomLines.V(q), s0, s1, out _))
+                    if (In(track, CustomLines.V(q), startArc, endArc, out _))
                     {
                         hit = true; removed++;
                         if (run.Count > 0) { runs.Add(run); run = new List<float[]>(); }
@@ -80,7 +80,7 @@ namespace SteamRailway
                 }
                 if (run.Count > 0) runs.Add(run);
                 if (!hit) continue;
-                runs.RemoveAll(r => r.Count < 2);
+                runs.RemoveAll(results => results.Count < 2);
                 if (src.Auto != null)
                 {
                     autoChanged = true;
@@ -89,8 +89,8 @@ namespace SteamRailway
                     var keep = src.Auto.Keep;
                     src.Auto.Points = runs[0];
                     src.Auto.Keep = KeepIn(keep, runs[0]);
-                    for (int i = 1; i < runs.Count; i++)
-                        newAuto.Add(new LineData { Points = runs[i], Keep = KeepIn(keep, runs[i]), Pieces = src.Auto.Pieces });
+                    for (int index = 1; index < runs.Count; index++)
+                        newAuto.Add(new LineData { Points = runs[index], Keep = KeepIn(keep, runs[index]), Pieces = src.Auto.Pieces });
                 }
                 else
                 {
@@ -99,65 +99,65 @@ namespace SteamRailway
                     var sw = src.Custom.Switches ?? new List<float[]>();
                     src.Custom.Points = runs[0];
                     src.Custom.Switches = SwitchesIn(sw, runs[0]);
-                    for (int i = 1; i < runs.Count; i++)
-                        newCustom.Add(new CustomLineData { Id = null, Points = runs[i], Fill = src.Custom.Fill, Switches = SwitchesIn(sw, runs[i]) });
+                    for (int index = 1; index < runs.Count; index++)
+                        newCustom.Add(new CustomLineData { Id = null, Points = runs[index], Fill = src.Custom.Fill, Switches = SwitchesIn(sw, runs[index]) });
                 }
             }
             if (auto != null) auto.Lines.AddRange(newAuto);
-            foreach (var c in newCustom) { c.Id = CustomLines.NextId(scene); custom.Lines.Add(c); }
+            foreach (var customLine in newCustom) { customLine.Id = CustomLines.NextId(scene); custom.Lines.Add(customLine); }
             Save(scene, auto, autoChanged, customChanged);
             return removed;
         }
 
         /// The kept stretches (bridges) that lie on this part of a split line.
-        static List<float[]> KeepIn(List<float[]> keep, List<float[]> pts)
+        static List<float[]> KeepIn(List<float[]> keep, List<float[]> points)
         {
-            var res = new List<float[]>();
-            if (keep == null) return res;
+            var results = new List<float[]>();
+            if (keep == null) return results;
             foreach (var k in keep)
             {
                 if (k == null || k.Length < 6) continue;
-                if (Near(pts, new Vector3(k[0], k[1], k[2])) && Near(pts, new Vector3(k[3], k[4], k[5]))) res.Add(k);
+                if (Near(points, new Vector3(k[0], k[1], k[2])) && Near(points, new Vector3(k[3], k[4], k[5]))) results.Add(k);
             }
-            return res;
+            return results;
         }
 
-        static bool Near(List<float[]> pts, Vector3 p)
+        static bool Near(List<float[]> points, Vector3 point)
         {
-            foreach (var q in pts) { float dx = q[0] - p.x, dz = q[2] - p.z; if (dx * dx + dz * dz < 9f) return true; }
+            foreach (var q in points) { float deltaX = q[0] - point.x, deltaZ = q[2] - point.z; if (deltaX * deltaX + deltaZ * deltaZ < 9f) return true; }
             return false;
         }
 
-        static List<float[]> SwitchesIn(List<float[]> sw, List<float[]> pts)
+        static List<float[]> SwitchesIn(List<float[]> sw, List<float[]> points)
         {
-            var res = new List<float[]>();
-            if (pts.Count == 0) return res;
-            var a = CustomLines.V(pts[0]); var b = CustomLines.V(pts[pts.Count - 1]);
+            var results = new List<float[]>();
+            if (points.Count == 0) return results;
+            var start = CustomLines.V(points[0]); var end = CustomLines.V(points[points.Count - 1]);
             foreach (var p in sw)
             {
-                var v = CustomLines.V(p);
-                if ((v - a).sqrMagnitude < 1f || (v - b).sqrMagnitude < 1f) res.Add(p);
+                var vector = CustomLines.V(p);
+                if ((vector - start).sqrMagnitude < 1f || (vector - end).sqrMagnitude < 1f) results.Add(p);
             }
-            return res;
+            return results;
         }
 
         /// Gives the stretch [s0, s1] of a built track a new shape: every line point on it moves to where `shape`
         /// puts its path metres. Points on a kept original piece (a bridge) stay. Returns how many points moved.
-        public static int Reshape(string scene, BuiltTrack t, float s0, float s1, System.Func<float, Vector3> shape)
+        public static int Reshape(string scene, BuiltTrack track, float startArc, float endArc, System.Func<float, Vector3> shape)
         {
             var srcs = Sources(scene, out var auto, out var custom);
             int moved = 0;
             bool autoChanged = false, customChanged = false;
             foreach (var src in srcs)
             {
-                for (int i = 0; i < src.Pts.Count; i++)
+                for (int index = 0; index < src.Pts.Count; index++)
                 {
-                    var p = CustomLines.V(src.Pts[i]);
-                    if (!In(t, p, s0, s1, out float s)) continue;
-                    if (src.Auto != null && OnKept(src.Auto, p)) continue;
-                    var np = shape(s);
-                    if ((np - p).sqrMagnitude < 1e-6f) continue;
-                    src.Pts[i] = CustomLines.F(np);
+                    var point = CustomLines.V(src.Pts[index]);
+                    if (!In(track, point, startArc, endArc, out float arcLength)) continue;
+                    if (src.Auto != null && OnKept(src.Auto, point)) continue;
+                    var np = shape(arcLength);
+                    if ((np - point).sqrMagnitude < 1e-6f) continue;
+                    src.Pts[index] = CustomLines.F(np);
                     moved++;
                     if (src.Auto != null) autoChanged = true; else customChanged = true;
                 }
@@ -166,16 +166,16 @@ namespace SteamRailway
             return moved;
         }
 
-        static bool OnKept(LineData l, Vector3 p)
+        static bool OnKept(LineData lineData, Vector3 point)
         {
-            if (l.Keep == null) return false;
-            foreach (var k in l.Keep)
+            if (lineData.Keep == null) return false;
+            foreach (var k in lineData.Keep)
             {
                 if (k == null || k.Length < 6) continue;
-                var a = new Vector3(k[0], k[1], k[2]); var b = new Vector3(k[3], k[4], k[5]);
-                var ab = b - a;
-                float t = Mathf.Clamp01(Vector3.Dot(p - a, ab) / Mathf.Max(ab.sqrMagnitude, 1e-4f));
-                if ((a + ab * t - p).magnitude < 3f) return true;
+                var start = new Vector3(k[0], k[1], k[2]); var end = new Vector3(k[3], k[4], k[5]);
+                var segment = end - start;
+                float fraction = Mathf.Clamp01(Vector3.Dot(point - start, segment) / Mathf.Max(segment.sqrMagnitude, 1e-4f));
+                if ((start + segment * fraction - point).magnitude < 3f) return true;
             }
             return false;
         }

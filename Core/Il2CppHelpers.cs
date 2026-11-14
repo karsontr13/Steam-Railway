@@ -13,30 +13,30 @@ namespace SteamRailway
 
         public static GameObject Child(Transform parent, string name, Vector3 localPos)
         {
-            var go = new GameObject(name);
-            go.transform.SetParent(parent, false);
-            go.transform.localPosition = localPos;
-            return go;
+            var targetObject = new GameObject(name);
+            targetObject.transform.SetParent(parent, false);
+            targetObject.transform.localPosition = localPos;
+            return targetObject;
         }
 
         /// Placeholder geometry until the real locomotive model exists.
-        public static GameObject Cube(Transform parent, string name, Vector3 localPos, Vector3 scale, Material mat, bool keepCollider)
+        public static GameObject Cube(Transform parent, string name, Vector3 localPos, Vector3 scale, Material material, bool keepCollider)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            go.name = name;
-            go.transform.SetParent(parent, false);
-            go.transform.localPosition = localPos;
-            go.transform.localScale = scale;
-            if (mat != null) go.GetComponent<MeshRenderer>().sharedMaterial = mat;
-            if (!keepCollider) Object.DestroyImmediate(go.GetComponent<BoxCollider>());
-            return go;
+            var targetObject = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            targetObject.name = name;
+            targetObject.transform.SetParent(parent, false);
+            targetObject.transform.localPosition = localPos;
+            targetObject.transform.localScale = scale;
+            if (material != null) targetObject.GetComponent<MeshRenderer>().sharedMaterial = material;
+            if (!keepCollider) Object.DestroyImmediate(targetObject.GetComponent<BoxCollider>());
+            return targetObject;
         }
 
-        public static Il2Cpp.LocalizedString Loc(string id)
+        public static Il2Cpp.LocalizedString Loc(string identifier)
         {
-            var l = new Il2Cpp.LocalizedString();
-            l.m_LocalizationID = id;
-            return l;
+            var localized = new Il2Cpp.LocalizedString();
+            localized.m_LocalizationID = identifier;
+            return localized;
         }
 
         // Empty Wwise handles: the train code calls into these unconditionally and throws on null.
@@ -68,25 +68,25 @@ namespace SteamRailway
             }
         }
 
-        public static float TerrainHeight(Vector3 p, float fallback)
+        public static float TerrainHeight(Vector3 point, float fallback)
         {
             var terrains = Terrain.activeTerrains;
-            for (int i = 0; i < terrains.Length; i++)
+            for (int index = 0; index < terrains.Length; index++)
             {
-                var t = terrains[i];
-                var tp = t.transform.position;
-                var size = t.terrainData.size;
-                if (p.x >= tp.x && p.x <= tp.x + size.x && p.z >= tp.z && p.z <= tp.z + size.z)
-                    return t.SampleHeight(p) + tp.y;
+                var terrain = terrains[index];
+                var targetPoint = terrain.transform.position;
+                var size = terrain.terrainData.size;
+                if (point.x >= targetPoint.x && point.x <= targetPoint.x + size.x && point.z >= targetPoint.z && point.z <= targetPoint.z + size.z)
+                    return terrain.SampleHeight(point) + targetPoint.y;
             }
             return fallback;
         }
 
-        public static Vector3 GroundBelow(Vector3 p, float maxDrop = 20f)
+        public static Vector3 GroundBelow(Vector3 samplePoint, float maxDrop = 20f)
         {
-            if (Physics.Raycast(p + Vector3.up * 5f, Vector3.down, out RaycastHit hit, maxDrop + 5f))
+            if (Physics.Raycast(samplePoint + Vector3.up * 5f, Vector3.down, out RaycastHit hit, maxDrop + 5f))
                 return hit.point + Vector3.up * 0.1f;
-            return p;
+            return samplePoint;
         }
     }
 }

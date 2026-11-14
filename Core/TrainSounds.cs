@@ -21,44 +21,44 @@ namespace SteamRailway
         public const string SteamHiss = "PLAY_STEAMTUNNELS";
         public const string Simmer = "PLAY_BOILINGLIQUIDTHICKLIGHT";
 
-        public static uint Play(string ev, GameObject go)
+        public static uint Play(string eventName, GameObject targetObject)
         {
-            if (go == null) return 0;
-            try { return GameAudioManager.PlaySound(ev, go); }
-            catch (System.Exception e) { SteamRailwayMod.Debug($"Sound {ev} failed: {e.Message}"); return 0; }
+            if (targetObject == null) return 0;
+            try { return GameAudioManager.PlaySound(eventName, targetObject); }
+            catch (System.Exception e) { SteamRailwayMod.Debug($"Sound {eventName} failed: {e.Message}"); return 0; }
         }
 
         /// A looping game sound that is played for a while and then faded out (the game ends its own repair sounds
         /// when the repair time is over; a one-shot call would keep looping).
-        public static void PlayFor(string ev, GameObject go, float seconds)
+        public static void PlayFor(string eventName, GameObject targetObject, float seconds)
         {
-            uint id = Play(ev, go);
-            if (id != 0) MelonLoader.MelonCoroutines.Start(StopAfter(id, seconds));
+            uint identifier = Play(eventName, targetObject);
+            if (identifier != 0) MelonLoader.MelonCoroutines.Start(StopAfter(identifier, seconds));
         }
 
-        static System.Collections.IEnumerator StopAfter(uint id, float seconds)
+        static System.Collections.IEnumerator StopAfter(uint identifier, float seconds)
         {
             yield return new WaitForSecondsRealtime(seconds);
-            Stop(ref id, 300);
+            Stop(ref identifier, 300);
         }
 
-        public static void Stop(ref uint id, int fadeMs = 400)
+        public static void Stop(ref uint identifier, int fadeMs = 400)
         {
-            if (id == 0) return;
-            try { GameAudioManager.StopPlayingID(ref id, fadeMs); } catch { }
-            id = 0;
+            if (identifier == 0) return;
+            try { GameAudioManager.StopPlayingID(ref identifier, fadeMs); } catch { }
+            identifier = 0;
         }
 
         /// A sound emitter object on the train (Wwise needs a registered game object to place 3D sounds).
         public static GameObject Emitter(Transform root, string name, Vector3 localPos)
         {
-            var t = root.Find(name);
-            if (t != null) return t.gameObject;
-            var go = new GameObject(name);
-            go.transform.SetParent(root, false);
-            go.transform.localPosition = localPos;
-            go.AddComponent<AkGameObj>();
-            return go;
+            var foundChild = root.Find(name);
+            if (foundChild != null) return foundChild.gameObject;
+            var targetObject = new GameObject(name);
+            targetObject.transform.SetParent(root, false);
+            targetObject.transform.localPosition = localPos;
+            targetObject.AddComponent<AkGameObj>();
+            return targetObject;
         }
 
         public static GameObject Cab(SteamTrain train) => Emitter(train.transform, "Snd_Cab", new Vector3(0f, 2.6f, -2.6f));
@@ -91,19 +91,19 @@ namespace SteamRailway
             {
                 string path = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Application.dataPath), RelPath);
                 if (!System.IO.File.Exists(path)) { SteamRailwayMod.Log.Msg("Story train sound bank not found, using the mod's sounds."); return false; }
-                var r = AkSoundEngine.LoadBank(path, out uint _);
-                s_Ok = r == AKRESULT.AK_Success || r == AKRESULT.AK_BankAlreadyLoaded;
-                SteamRailwayMod.Log.Msg($"Story train sound bank: {r}.");
+                var result = AkSoundEngine.LoadBank(path, out uint _);
+                s_Ok = result == AKRESULT.AK_Success || result == AKRESULT.AK_BankAlreadyLoaded;
+                SteamRailwayMod.Log.Msg($"Story train sound bank: {result}.");
             }
             catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Story train sound bank failed: {e.Message}"); s_Ok = false; }
             return s_Ok;
         }
 
         /// Posts one of the train's events (false when the bank is not available).
-        public static bool Post(SteamTrain train, string ev, GameObject go = null)
+        public static bool Post(SteamTrain train, string eventName, GameObject targetObject = null)
         {
             if (train == null || !Available) return false;
-            return TrainSounds.Play(ev, go ?? TrainSounds.Cab(train)) != 0;
+            return TrainSounds.Play(eventName, targetObject ?? TrainSounds.Cab(train)) != 0;
         }
 
         static readonly System.Collections.Generic.Dictionary<string, string> s_States = new System.Collections.Generic.Dictionary<string, string>();
@@ -111,7 +111,7 @@ namespace SteamRailway
         /// Wwise states are global: only send changes.
         public static void State(string group, string state)
         {
-            if (s_States.TryGetValue(group, out var cur) && cur == state) return;
+            if (s_States.TryGetValue(group, out var current) && current == state) return;
             s_States[group] = state;
             try { AkSoundEngine.SetState(group, state); } catch { }
         }
@@ -141,13 +141,13 @@ namespace SteamRailway
 
         public TrainAudio(SteamTrain train)
         {
-            var R = train.transform;
-            m_Boiler = TrainSounds.Emitter(R, "Snd_Boiler", new Vector3(0f, 3.2f, 0.5f));
-            m_Valve = TrainSounds.Emitter(R, "Snd_Valve", new Vector3(0f, 4.05f, -1.25f));
-            var wheels = TrainSounds.Emitter(R, "Snd_Wheels", new Vector3(0f, 0.6f, 0f));
-            var whistle = TrainSounds.Emitter(R, "Snd_Whistle", new Vector3(0.35f, 4.0f, -1.45f));
+            var rootTransform = train.transform;
+            m_Boiler = TrainSounds.Emitter(rootTransform, "Snd_Boiler", new Vector3(0f, 3.2f, 0.5f));
+            m_Valve = TrainSounds.Emitter(rootTransform, "Snd_Valve", new Vector3(0f, 4.05f, -1.25f));
+            var wheels = TrainSounds.Emitter(rootTransform, "Snd_Wheels", new Vector3(0f, 0.6f, 0f));
+            var whistle = TrainSounds.Emitter(rootTransform, "Snd_Whistle", new Vector3(0.35f, 4.0f, -1.45f));
             m_Story = StoryTrainBank.Ensure();
-            m_TrainEmitter = TrainSounds.Emitter(R, "Snd_Train", new Vector3(0f, 2.2f, 0f));
+            m_TrainEmitter = TrainSounds.Emitter(rootTransform, "Snd_Train", new Vector3(0f, 2.2f, 0f));
             try
             {
                 var rolling = LocomotiveModel.Sound("Rolling");
@@ -166,7 +166,7 @@ namespace SteamRailway
                 if (m_RealRolling)
                 {
                     // A second copy, half a loop out of step, under the first: a fuller, louder running sound.
-                    m_Rumble2 = SynthSounds.Source(TrainSounds.Emitter(R, "Snd_Wheels2", new Vector3(0f, 0.6f, -2.5f)), true, 8f, 140f);
+                    m_Rumble2 = SynthSounds.Source(TrainSounds.Emitter(rootTransform, "Snd_Wheels2", new Vector3(0f, 0.6f, -2.5f)), true, 8f, 140f);
                     m_Rumble2.clip = rolling;
                     m_Rumble2.spatialBlend = 0.6f;
                     m_Rumble.spatialBlend = 0.8f;
@@ -177,37 +177,37 @@ namespace SteamRailway
             catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Train audio sources unavailable: {e.Message}"); }
         }
 
-        public void Update(SteamSim sim)
+        public void Update(SteamSim simulation)
         {
             float dt = Time.deltaTime;
-            float speed = Mathf.Abs(sim.Velocity);
+            float speed = Mathf.Abs(simulation.Velocity);
             if (m_Story)
             {
-                UpdateStory(sim, speed);
-                UpdateStanding(sim, dt, speed);     // the story loop is almost silent at a stand: keep our steam
+                UpdateStory(simulation, speed);
+                UpdateStanding(simulation, dt, speed);     // the story loop is almost silent at a stand: keep our steam
             }
             else
             {
-                if (m_Steam == null) Loop(ref m_HissId, TrainSounds.SteamHiss, m_Valve, sim.SafetyValveOpen);
-                UpdateStanding(sim, dt);
-                Loop(ref m_SimmerId, TrainSounds.Simmer, m_Boiler, sim.Pressure > 20f && !sim.S.Exploded);
+                if (m_Steam == null) Loop(ref m_HissId, TrainSounds.SteamHiss, m_Valve, simulation.SafetyValveOpen);
+                UpdateStanding(simulation, dt);
+                Loop(ref m_SimmerId, TrainSounds.Simmer, m_Boiler, simulation.Pressure > 20f && !simulation.S.Exploded);
             }
             UpdateRails(m_Story ? 0f : speed, dt);      // the story train loop has its own running sound
-            UpdateBrake(sim, speed, dt);
-            UpdateWhistle(sim.Train.m_SteamWhistleOpen, dt);
+            UpdateBrake(simulation, speed, dt);
+            UpdateWhistle(simulation.Train.m_SteamWhistleOpen, dt);
         }
 
         /// Feeds the sound bank's loops the values it expects: speed, pressure,
         /// boiler temperature and the boiler / engine / gear / on-board states.
-        void UpdateStory(SteamSim sim, float speed)
+        void UpdateStory(SteamSim simulation, float speed)
         {
-            var s = sim.S;
+            var simState = simulation.S;
             if (m_TrainLoopId == 0) m_TrainLoopId = TrainSounds.Play("Play_SteamTrain", m_TrainEmitter);
             if (m_BoilerLoopId == 0) m_BoilerLoopId = TrainSounds.Play("Play_SteamTrain_Boiler", m_Boiler);
             // The story train's sound design uses normalised values (its RTPC curves run 0..1):
             // velocity / 15 m/s (top speed) and pressure / working pressure.
             float v01 = Mathf.Clamp01(speed / SteamSim.MaxSpeed);
-            float p01 = Mathf.Clamp01(sim.Pressure / SteamSim.MaxPressure);
+            float p01 = Mathf.Clamp01(simulation.Pressure / SteamSim.MaxPressure);
             try
             {
                 AkSoundEngine.SetRTPCValue("SteamTrain_Velocity", v01, m_TrainEmitter);
@@ -217,66 +217,66 @@ namespace SteamRailway
                 AkSoundEngine.SetRTPCValue("SteamTrain_PSI", p01);
             }
             catch { }
-            bool inside = sim.Train.IsInsideTrain;
+            bool inside = simulation.Train.IsInsideTrain;
             StoryTrainBank.State("SteamTrain_OnBoard", inside ? "stob_True" : "stob_False");
-            StoryTrainBank.State("SteamTrain_Boiler", sim.FireBurning || sim.Pressure > 20f ? "stb_On" : "stb_Off");
-            StoryTrainBank.State("SteamTrain_Engine", sim.SafetyValveOpen ? "ste_Overfire" : "ste_Normal");
-            StoryTrainBank.State("SteamTrain_GearShift", s.Reverser > 0 ? "stgs_Up" : s.Reverser < 0 ? "stgs_Down" : "None");
+            StoryTrainBank.State("SteamTrain_Boiler", simulation.FireBurning || simulation.Pressure > 20f ? "stb_On" : "stb_Off");
+            StoryTrainBank.State("SteamTrain_Engine", simulation.SafetyValveOpen ? "ste_Overfire" : "ste_Normal");
+            StoryTrainBank.State("SteamTrain_GearShift", simState.Reverser > 0 ? "stgs_Up" : simState.Reverser < 0 ? "stgs_Down" : "None");
 
-            var cab = TrainSounds.Cab(sim.Train);
+            var cab = TrainSounds.Cab(simulation.Train);
             if (inside != m_WasInside) TrainSounds.Play(inside ? "Play_SteamTrain_SteamEngineEnter" : "Play_SteamTrain_SteamEngineExit", cab);
             m_WasInside = inside;
-            bool burning = sim.FireBurning;
+            bool burning = simulation.FireBurning;
             if (burning && !m_WasBurning) TrainSounds.Play("Play_SteamTrain_BoilerTurnOnFire", cab);
             else if (!burning && m_WasBurning) TrainSounds.Play("Play_SteamTrain_BoilerTurnOffFire", cab);
             m_WasBurning = burning;
         }
 
-        void UpdateStanding(SteamSim sim, float dt, float speed = 0f)
+        void UpdateStanding(SteamSim simulation, float deltaTime, float speed = 0f)
         {
-            bool alive = !sim.S.Exploded;
-            float p = Mathf.Clamp01(sim.Pressure / SteamSim.MaxPressure);
+            bool alive = !simulation.S.Exploded;
+            float progress = Mathf.Clamp01(simulation.Pressure / SteamSim.MaxPressure);
             if (m_Steam != null)
             {
                 // Steam leaking from the cocks and glands while standing; fades away once the train is moving.
                 float standing = 1f - Mathf.Clamp01(speed / 3f);
-                float idle = m_Story ? Mathf.Lerp(0.2f, 0.5f, p) * standing : Mathf.Lerp(0.05f, 0.2f, p);
-                float v = sim.SafetyValveOpen ? 0.95f : alive && sim.Pressure > 10f ? idle : 0f;
-                Fade(m_Steam, v, dt * (sim.SafetyValveOpen ? 2f : 0.5f));
-                m_Steam.pitch = sim.SafetyValveOpen ? 1.05f : 0.9f;
+                float idle = m_Story ? Mathf.Lerp(0.2f, 0.5f, progress) * standing : Mathf.Lerp(0.05f, 0.2f, progress);
+                float value = simulation.SafetyValveOpen ? 0.95f : alive && simulation.Pressure > 10f ? idle : 0f;
+                Fade(m_Steam, value, deltaTime * (simulation.SafetyValveOpen ? 2f : 0.5f));
+                m_Steam.pitch = simulation.SafetyValveOpen ? 1.05f : 0.9f;
             }
         }
 
-        static void Fade(AudioSource src, float target, float step)
+        static void Fade(AudioSource source, float target, float step)
         {
-            src.volume = Mathf.MoveTowards(src.volume, target, step);
-            if (src.volume > 0.001f && !src.isPlaying) src.Play();
-            else if (src.volume <= 0.001f && src.isPlaying) src.Stop();
+            source.volume = Mathf.MoveTowards(source.volume, target, step);
+            if (source.volume > 0.001f && !source.isPlaying) source.Play();
+            else if (source.volume <= 0.001f && source.isPlaying) source.Stop();
         }
 
         /// Brake blocks squealing on the tyres while the train is braked and still rolling.
-        void UpdateBrake(SteamSim sim, float speed, float dt)
+        void UpdateBrake(SteamSim simulation, float speed, float deltaTime)
         {
             if (m_Brake == null) return;
-            bool braking = (sim.S.SteamBrake && sim.Pressure >= 20f) || sim.S.HandBrake;
-            float k = Mathf.Clamp01(speed / 6f);
-            float target = braking && speed > 0.4f ? Mathf.Lerp(0.35f, 0.9f, k) : 0f;
-            Fade(m_Brake, target, dt * (target > m_Brake.volume ? 3f : 1.5f));
-            m_Brake.pitch = Mathf.Lerp(0.85f, 1.08f, k);
+            bool braking = (simulation.S.SteamBrake && simulation.Pressure >= 20f) || simulation.S.HandBrake;
+            float scale = Mathf.Clamp01(speed / 6f);
+            float target = braking && speed > 0.4f ? Mathf.Lerp(0.35f, 0.9f, scale) : 0f;
+            Fade(m_Brake, target, deltaTime * (target > m_Brake.volume ? 3f : 1.5f));
+            m_Brake.pitch = Mathf.Lerp(0.85f, 1.08f, scale);
         }
 
-        void UpdateRails(float speed, float dt)
+        void UpdateRails(float speed, float deltaTime)
         {
             if (m_Rumble == null) return;
-            float k = Mathf.Clamp01(speed / SteamSim.MaxSpeed);
-            float target = speed > 0.2f ? Mathf.Lerp(0.65f, 1f, Mathf.Sqrt(k)) : 0f;
-            float pitch = m_RealRolling ? Mathf.Lerp(0.72f, 1.15f, k) : Mathf.Lerp(0.7f, 1.25f, k);
-            Fade(m_Rumble, target, dt * 0.8f);
+            float scale = Mathf.Clamp01(speed / SteamSim.MaxSpeed);
+            float target = speed > 0.2f ? Mathf.Lerp(0.65f, 1f, Mathf.Sqrt(scale)) : 0f;
+            float pitch = m_RealRolling ? Mathf.Lerp(0.72f, 1.15f, scale) : Mathf.Lerp(0.7f, 1.25f, scale);
+            Fade(m_Rumble, target, deltaTime * 0.8f);
             m_Rumble.pitch = pitch;
             if (m_Rumble2 != null)
             {
                 bool wasPlaying = m_Rumble2.isPlaying;
-                Fade(m_Rumble2, target * 0.8f, dt * 0.8f);
+                Fade(m_Rumble2, target * 0.8f, deltaTime * 0.8f);
                 m_Rumble2.pitch = pitch * 0.97f;               // slightly deeper copy
                 if (!wasPlaying && m_Rumble2.isPlaying && m_Rumble2.clip != null)
                     m_Rumble2.timeSamples = m_Rumble2.clip.samples / 2;
@@ -285,24 +285,24 @@ namespace SteamRailway
             if (m_RealRolling) return;                  // the recording already has the rail joints in it
             if (speed > 0.2f)
             {
-                m_Travelled += speed * dt;
+                m_Travelled += speed * deltaTime;
                 if (m_Travelled >= RailLength)
                 {
                     m_Travelled -= RailLength;
                     foreach (var off in AxleOffsets) m_PendingClacks.Add(off / speed);
                 }
             }
-            for (int i = m_PendingClacks.Count - 1; i >= 0; i--)
+            for (int index = m_PendingClacks.Count - 1; index >= 0; index--)
             {
-                m_PendingClacks[i] -= dt;
-                if (m_PendingClacks[i] > 0f) continue;
-                m_PendingClacks.RemoveAt(i);
-                m_Clack.pitch = Random.Range(0.9f, 1.1f) * Mathf.Lerp(0.85f, 1.1f, k);
-                m_Clack.PlayOneShot(SynthSounds.Clack, Mathf.Lerp(0.35f, 0.9f, k) * Random.Range(0.8f, 1f));
+                m_PendingClacks[index] -= deltaTime;
+                if (m_PendingClacks[index] > 0f) continue;
+                m_PendingClacks.RemoveAt(index);
+                m_Clack.pitch = Random.Range(0.9f, 1.1f) * Mathf.Lerp(0.85f, 1.1f, scale);
+                m_Clack.PlayOneShot(SynthSounds.Clack, Mathf.Lerp(0.35f, 0.9f, scale) * Random.Range(0.8f, 1f));
             }
         }
 
-        void UpdateWhistle(bool open, float dt)
+        void UpdateWhistle(bool open, float deltaTime)
         {
             if (m_Whistle == null) return;
             if (m_RealWhistle)
@@ -313,17 +313,17 @@ namespace SteamRailway
                 return;
             }
             // Quick attack, slightly slower release, like a real valve letting go.
-            m_WhistleLevel = Mathf.MoveTowards(m_WhistleLevel, open ? 1f : 0f, dt * (open ? 6f : 3f));
+            m_WhistleLevel = Mathf.MoveTowards(m_WhistleLevel, open ? 1f : 0f, deltaTime * (open ? 6f : 3f));
             m_Whistle.volume = m_WhistleLevel * WhistleVolume;
             m_Whistle.pitch = 0.94f + 0.06f * m_WhistleLevel;   // the pitch rises as the valve opens
             if (m_WhistleLevel > 0f && !m_Whistle.isPlaying) m_Whistle.Play();
             else if (m_WhistleLevel <= 0f && m_Whistle.isPlaying) m_Whistle.Stop();
         }
 
-        static void Loop(ref uint id, string ev, GameObject go, bool on)
+        static void Loop(ref uint identifier, string eventName, GameObject targetObject, bool enabled)
         {
-            if (on && id == 0) id = TrainSounds.Play(ev, go);
-            else if (!on && id != 0) TrainSounds.Stop(ref id);
+            if (enabled && identifier == 0) identifier = TrainSounds.Play(eventName, targetObject);
+            else if (!enabled && identifier != 0) TrainSounds.Stop(ref identifier);
         }
 
         public void StopAll()

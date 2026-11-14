@@ -17,65 +17,65 @@ namespace SteamRailway
         const float BoilerRepairAmount = 30f;
         const float MaxRepairTemp = 80f;
 
-        public static string Describe(SteamSim sim)
+        public static string Describe(SteamSim simulation)
         {
-            var s = sim.S;
-            if (s.Exploded) return L.T($"Kazan bakımı: PATLAMIŞ — onarım {ExplosionScrap} hurda metal + alet kutusu", $"Boiler maintenance: BURST — repair needs {ExplosionScrap} scrap metal + a tool box");
-            if (s.PlugBlown) return L.T($"Kazan bakımı: eriyen tapa erimiş — {PlugScrap} hurda metal + alet kutusu", $"Boiler maintenance: fusible plug melted — {PlugScrap} scrap metal + a tool box");
-            if (s.ValveCondition < 99f) return L.T($"Kazan bakımı: emniyet supabı %{Mathf.RoundToInt(s.ValveCondition)} — {ValveScrap} hurda metal + alet kutusu", $"Boiler maintenance: safety valve {Mathf.RoundToInt(s.ValveCondition)}% — {ValveScrap} scrap metal + a tool box");
-            if (s.BoilerCondition < 99f) return L.T($"Kazan bakımı: kazan %{Mathf.RoundToInt(s.BoilerCondition)} — {BoilerScrap} hurda metal + alet kutusu", $"Boiler maintenance: boiler {Mathf.RoundToInt(s.BoilerCondition)}% — {BoilerScrap} scrap metal + a tool box");
+            var simState = simulation.S;
+            if (simState.Exploded) return L.T($"Kazan bakımı: PATLAMIŞ — onarım {ExplosionScrap} hurda metal + alet kutusu", $"Boiler maintenance: BURST — repair needs {ExplosionScrap} scrap metal + a tool box");
+            if (simState.PlugBlown) return L.T($"Kazan bakımı: eriyen tapa erimiş — {PlugScrap} hurda metal + alet kutusu", $"Boiler maintenance: fusible plug melted — {PlugScrap} scrap metal + a tool box");
+            if (simState.ValveCondition < 99f) return L.T($"Kazan bakımı: emniyet supabı %{Mathf.RoundToInt(simState.ValveCondition)} — {ValveScrap} hurda metal + alet kutusu", $"Boiler maintenance: safety valve {Mathf.RoundToInt(simState.ValveCondition)}% — {ValveScrap} scrap metal + a tool box");
+            if (simState.BoilerCondition < 99f) return L.T($"Kazan bakımı: kazan %{Mathf.RoundToInt(simState.BoilerCondition)} — {BoilerScrap} hurda metal + alet kutusu", $"Boiler maintenance: boiler {Mathf.RoundToInt(simState.BoilerCondition)}% — {BoilerScrap} scrap metal + a tool box");
             return L.T("Kazan bakımı: her şey yolunda", "Boiler maintenance: all good");
         }
 
-        public static void TryRepair(SteamSim sim)
+        public static void TryRepair(SteamSim simulation)
         {
-            var s = sim.S;
+            var simState = simulation.S;
             int scrap;
-            if (s.Exploded) scrap = ExplosionScrap;
-            else if (s.PlugBlown) scrap = PlugScrap;
-            else if (s.ValveCondition < 99f) scrap = ValveScrap;
-            else if (s.BoilerCondition < 99f) scrap = BoilerScrap;
+            if (simState.Exploded) scrap = ExplosionScrap;
+            else if (simState.PlugBlown) scrap = PlugScrap;
+            else if (simState.ValveCondition < 99f) scrap = ValveScrap;
+            else if (simState.BoilerCondition < 99f) scrap = BoilerScrap;
             else { CabControls.Message(L.T("Kazanın bakıma ihtiyacı yok.", "The boiler needs no maintenance.")); return; }
 
-            if (sim.Pressure > 1f || s.BoilerTemp > MaxRepairTemp)
+            if (simulation.Pressure > 1f || simState.BoilerTemp > MaxRepairTemp)
             {
                 CabControls.Message(L.T("Kazan çok sıcak. Ateşi söndür ve soğumasını bekle.", "The boiler is too hot. Let the fire die and wait for it to cool."));
                 return;
             }
 
-            var inv = GameManager.GetInventoryComponent();
+            var inventory = GameManager.GetInventoryComponent();
             bool hasTools = false;
-            foreach (var t in Tools) if (inv.GetBestGearItemWithName(t) != null) { hasTools = true; break; }
+            foreach (var text in Tools) if (inventory.GetBestGearItemWithName(text) != null) { hasTools = true; break; }
             if (!hasTools) { CabControls.Message(L.T("Onarım için alet kutusu gerekiyor.", "You need a tool box to repair it.")); return; }
 
-            int have = inv.GetNumGearWithName(ScrapMetal);
+            int have = inventory.GetNumGearWithName(ScrapMetal);
             if (have < scrap) { CabControls.Message(L.T($"Onarım için {scrap} hurda metal gerekiyor (sende {have} var).", $"The repair needs {scrap} scrap metal (you have {have}).")); return; }
 
-            inv.RemoveGearFromInventory(ScrapMetal, scrap, false);
-            TrainSounds.PlayFor(TrainSounds.Repair, TrainSounds.Cab(sim.Train), 2.8f);
+            inventory.RemoveGearFromInventory(ScrapMetal, scrap, false);
+            TrainSounds.PlayFor(TrainSounds.Repair, TrainSounds.Cab(simulation.Train), 2.8f);
 
-            if (s.Exploded)
+            if (simState.Exploded)
             {
-                s.Exploded = false;
-                s.PlugBlown = false;
-                s.BoilerCondition = 40f;
-                s.ValveCondition = 50f;
+                simState.Exploded = false;
+                simState.PlugBlown = false;
+                simState.BoilerCondition = 40f;
+                simState.ValveCondition = 50f;
                 CabControls.Message(L.T("Kazan kabaca onarıldı (%40). Tam güç için bakıma devam et.", "The boiler is patched up (40%). Keep maintaining it for full strength."));
             }
-            else if (s.PlugBlown)
+            else if (simState.PlugBlown)
             {
-                s.PlugBlown = false;
+                simState.PlugBlown = false;
                 CabControls.Message(L.T("Yeni eriyen tapa takıldı. Kazanı doldurmadan ateşi yakma!", "A new fusible plug is fitted. Don't light the fire before filling the boiler!"));
             }
-            else if (s.ValveCondition < 99f)
+            else if (simState.ValveCondition < 99f)
             {
-                s.ValveCondition = 100f;
+                simState.ValveCondition = 100f;
                 CabControls.Message(L.T("Emniyet supabı yenilendi.", "The safety valve has been renewed."));
             }
             else
             {
-                s.BoilerCondition = Mathf.Min(100f, s.BoilerCondition + BoilerRepairAmount);
-                CabControls.Message(L.T($"Kazan onarıldı (%{Mathf.RoundToInt(s.BoilerCondition)}).", $"Boiler repaired ({Mathf.RoundToInt(s.BoilerCondition)}%)."));
+                simState.BoilerCondition = Mathf.Min(100f, simState.BoilerCondition + BoilerRepairAmount);
+                CabControls.Message(L.T($"Kazan onarıldı (%{Mathf.RoundToInt(simState.BoilerCondition)}).", $"Boiler repaired ({Mathf.RoundToInt(simState.BoilerCondition)}%)."));
             }
         }
     }

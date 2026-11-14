@@ -39,6 +39,50 @@ namespace SteamRailway
             return o;
         }
 
+        /// The bundle is carried inside the DLL. Unity loads it from a file, so it is written to a cache folder in
+        /// UserData (again whenever it differs from the copy in the DLL). Handing the 12 MB to the game as an Il2Cpp
+        /// array did not work: the array was collected before the game had read it.
+        static AssetBundle LoadBundle()
+        {
+            var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+            string path = null;
+            try { path = ExtractBundle(assembly); }
+            catch (System.Exception e) { SteamRailwayMod.Log.Warning($"{BundleFile} could not be unpacked from the DLL: {e.Message}"); }
+            if (path == null) path = Path.Combine(RouteStore.FolderPath, BundleFile);
+            if (!File.Exists(path))
+            {
+                SteamRailwayMod.Log.Warning($"{BundleFile} not found, using placeholder boxes.");
+                return null;
+            }
+            var bundle = AssetBundle.LoadFromFile(path);
+            if (bundle == null) SteamRailwayMod.Log.Error($"{BundleFile} could not be loaded.");
+            return bundle;
+        }
+
+        static string ExtractBundle(System.Reflection.Assembly assembly)
+        {
+            using (var stream = assembly.GetManifestResourceStream(BundleFile))
+            {
+                if (stream == null) return null;
+                var bytes = new byte[stream.Length];
+                int read = 0;
+                while (read < bytes.Length) read += stream.Read(bytes, read, bytes.Length - read);
+                string direction = Path.Combine(MelonLoader.Utils.MelonEnvironment.UserDataDirectory, "SteamRailway");
+                string path = Path.Combine(direction, BundleFile);
+                using (var hasher = System.Security.Cryptography.SHA1.Create())
+                {
+                    if (File.Exists(path))
+                    {
+                        var onDisk = File.ReadAllBytes(path);
+                        if (onDisk.Length == bytes.Length && System.Linq.Enumerable.SequenceEqual(hasher.ComputeHash(onDisk), hasher.ComputeHash(bytes))) return path;
+                    }
+                }
+                Directory.CreateDirectory(direction);
+                File.WriteAllBytes(path, bytes);
+                return path;
+            }
+        }
+
         static bool Load()
         {
             if (s_Prefab != null && s_Palette != null) return true;
@@ -46,14 +90,8 @@ namespace SteamRailway
             s_Tried = true;
             if (s_Bundle == null)
             {
-                string path = Path.Combine(RouteStore.FolderPath, BundleFile);
-                if (!File.Exists(path))
-                {
-                    SteamRailwayMod.Log.Warning($"{BundleFile} not found, using placeholder boxes.");
-                    return false;
-                }
-                var bundle = AssetBundle.LoadFromFile(path);
-                if (bundle == null) { SteamRailwayMod.Log.Error($"{BundleFile} could not be loaded."); return false; }
+                var bundle = LoadBundle();
+                if (bundle == null) return false;
                 s_Bundle = bundle;
             }
             bool again = s_Prefab != null || s_Material != null;
@@ -70,10 +108,10 @@ namespace SteamRailway
         {
             var shader = Shader.Find(shaderName);
             if (shader != null) return new Material(shader);
-            foreach (var r in Object.FindObjectsOfType<Renderer>())
+            foreach (var renderer in Object.FindObjectsOfType<Renderer>())
             {
-                var m = r.sharedMaterial;
-                if (m != null && m.shader != null && m.shader.name == shaderName) return new Material(m);
+                var material = renderer.sharedMaterial;
+                if (material != null && material.shader != null && material.shader.name == shaderName) return new Material(material);
             }
             return null;
         }
@@ -83,23 +121,23 @@ namespace SteamRailway
 
         /// The game's painterly look comes from a tiled noise overlay (_DetailOverlay) on TLD_StandardDiffuse.
         /// Borrow that texture from any loaded game material.
-        static void ApplyDetail(Material m, float tiling, float strength)
+        static void ApplyDetail(Material material, float tiling, float strength)
         {
-            if (m == null || !m.HasProperty("_DetailOverlay")) return;
+            if (material == null || !material.HasProperty("_DetailOverlay")) return;
             if (s_Detail == null)
             {
-                foreach (var r in Object.FindObjectsOfType<Renderer>())
+                foreach (var renderer in Object.FindObjectsOfType<Renderer>())
                 {
-                    var gm = r.sharedMaterial;
-                    if (gm == null || !gm.HasProperty("_DetailOverlay")) continue;
-                    var t = gm.GetTexture("_DetailOverlay");
-                    if (t != null) { s_Detail = t; break; }
+                    var glassMaterial = renderer.sharedMaterial;
+                    if (glassMaterial == null || !glassMaterial.HasProperty("_DetailOverlay")) continue;
+                    var texture = glassMaterial.GetTexture("_DetailOverlay");
+                    if (texture != null) { s_Detail = texture; break; }
                 }
             }
             if (s_Detail == null) return;
-            m.SetTexture("_DetailOverlay", s_Detail);
-            m.SetFloat("_DetailTiling", tiling);
-            m.SetFloat("_DetailStrength", strength);
+            material.SetTexture("_DetailOverlay", s_Detail);
+            material.SetFloat("_DetailTiling", tiling);
+            material.SetFloat("_DetailStrength", strength);
         }
 
         static void EnsureMaterials()
@@ -141,37 +179,37 @@ namespace SteamRailway
         {
             if (!Load()) return null;
             EnsureMaterials();
-            var go = Object.Instantiate(s_Prefab);
-            go.name = "Model";
-            go.transform.SetParent(trainRoot, false);
-            go.transform.localPosition = Vector3.zero;
-            go.transform.localRotation = Quaternion.identity;
+            var targetObject = Object.Instantiate(s_Prefab);
+            targetObject.name = "Model";
+            targetObject.transform.SetParent(trainRoot, false);
+            targetObject.transform.localPosition = Vector3.zero;
+            targetObject.transform.localRotation = Quaternion.identity;
             // door windows ride on their doors (kept apart in the FBX: the export misplaces child objects)
             foreach (var side in new[] { "L", "R" })
             {
-                var door = FindDeep(go.transform, "CabDoor_" + side);
-                var glass = FindDeep(go.transform, "Glass_Door" + side);
+                var door = FindDeep(targetObject.transform, "CabDoor_" + side);
+                var glass = FindDeep(targetObject.transform, "Glass_Door" + side);
                 if (door != null && glass != null) glass.SetParent(door, true);
             }
-            foreach (var r in go.GetComponentsInChildren<MeshRenderer>(true))
+            foreach (var meshRenderer in targetObject.GetComponentsInChildren<MeshRenderer>(true))
             {
-                string n = r.name;
+                string n = meshRenderer.name;
                 if (n.StartsWith("Col_"))
                 {
-                    var mf = r.GetComponent<MeshFilter>();
-                    var box = r.gameObject.AddComponent<BoxCollider>();
-                    if (mf != null && mf.sharedMesh != null) { box.center = mf.sharedMesh.bounds.center; box.size = mf.sharedMesh.bounds.size; }
-                    r.enabled = false;
+                    var meshFilter = meshRenderer.GetComponent<MeshFilter>();
+                    var box = meshRenderer.gameObject.AddComponent<BoxCollider>();
+                    if (meshFilter != null && meshFilter.sharedMesh != null) { box.center = meshFilter.sharedMesh.bounds.center; box.size = meshFilter.sharedMesh.bounds.size; }
+                    meshRenderer.enabled = false;
                 }
                 else if (n.StartsWith("Glass_"))
                 {
-                    if (s_Glass != null) { r.sharedMaterial = s_Glass; r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; }
-                    else r.enabled = false;
+                    if (s_Glass != null) { meshRenderer.sharedMaterial = s_Glass; meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; }
+                    else meshRenderer.enabled = false;
                 }
-                else if (n == "Dials") r.sharedMaterial = s_Dials;
-                else r.sharedMaterial = s_Material;
+                else if (n == "Dials") meshRenderer.sharedMaterial = s_Dials;
+                else meshRenderer.sharedMaterial = s_Material;
             }
-            return go;
+            return targetObject;
         }
 
         static GameObject s_SwitchPrefab;
@@ -183,13 +221,13 @@ namespace SteamRailway
             if (s_SwitchPrefab == null) s_SwitchPrefab = Keep(s_Bundle.LoadAsset<GameObject>("SteamRailway_Switch"));
             if (s_SwitchPrefab == null) return null;
             EnsureMaterials();
-            var go = Object.Instantiate(s_SwitchPrefab);
-            go.name = "Model";
-            go.transform.SetParent(parent, false);
-            go.transform.localPosition = Vector3.zero;
-            go.transform.localRotation = Quaternion.identity;
-            foreach (var r in go.GetComponentsInChildren<MeshRenderer>(true)) r.sharedMaterial = s_Material;
-            return go;
+            var targetObject = Object.Instantiate(s_SwitchPrefab);
+            targetObject.name = "Model";
+            targetObject.transform.SetParent(parent, false);
+            targetObject.transform.localPosition = Vector3.zero;
+            targetObject.transform.localRotation = Quaternion.identity;
+            foreach (var meshRenderer in targetObject.GetComponentsInChildren<MeshRenderer>(true)) meshRenderer.sharedMaterial = s_Material;
+            return targetObject;
         }
 
         /// A sound clip from the bundle (Sounds/*.wav, see Sounds/CREDITS.txt); null if missing.
@@ -236,10 +274,10 @@ namespace SteamRailway
         {
             if (root == null) return null;
             if (root.name == name) return root;
-            for (int i = 0; i < root.childCount; i++)
+            for (int index = 0; index < root.childCount; index++)
             {
-                var t = FindDeep(root.GetChild(i), name);
-                if (t != null) return t;
+                var transform = FindDeep(root.GetChild(index), name);
+                if (transform != null) return transform;
             }
             return null;
         }

@@ -113,11 +113,11 @@ namespace SteamRailway
         {
             get
             {
-                var c = Train.m_Container;
-                if (c == null) return false;
-                if (c.m_OpenInProgress) return true;
+                var container = Train.m_Container;
+                if (container == null) return false;
+                if (container.m_OpenInProgress) return true;
                 var panel = InterfaceManager.GetPanel<Panel_Container>();
-                return panel != null && panel.IsEnabled() && panel.m_Container == c;
+                return panel != null && panel.IsEnabled() && panel.m_Container == container;
             }
         }
         public float BoilerLevel => S.BoilerWater / BoilerCapacity;
@@ -175,14 +175,14 @@ namespace SteamRailway
             FireHeat = S.FireLevel * draft * (FireDoorOpen ? 0.7f : 1f);
 
             float waterFactor = NominalWater / Mathf.Max(S.BoilerWater, 30f);
-            float dT = FireHeat * HeatRate * waterFactor * minutes;
-            dT -= (S.BoilerTemp - ambient) * CoolingPerMin * minutes;
+            float deltaTime = FireHeat * HeatRate * waterFactor * minutes;
+            deltaTime -= (S.BoilerTemp - ambient) * CoolingPerMin * minutes;
 
             // Steam drawn by the cylinders.
             float steam = 0f;
             if (Pressure > 0f && S.Regulator > 0f && S.Reverser != 0)
                 steam = S.Regulator * (0.3f + Mathf.Abs(Velocity) / MaxSpeed) * Mathf.Clamp01(Pressure / 60f);
-            dT -= steam * SteamCoolingPerUnit * waterFactor * minutes;
+            deltaTime -= steam * SteamCoolingPerUnit * waterFactor * minutes;
             S.BoilerWater -= steam * WaterPerSteamUnit * minutes;
 
             // Feed water.
@@ -193,7 +193,7 @@ namespace SteamRailway
                 float flow = Mathf.Min(InjectorFlow * minutes, S.TenderWater, BoilerCapacity - S.BoilerWater);
                 S.TenderWater -= flow;
                 S.BoilerWater += flow;
-                dT -= InjectorCooling * minutes;
+                deltaTime -= InjectorCooling * minutes;
             }
 
             // Snow in the tender melts with the boiler's waste heat (and above freezing, with the air).
@@ -205,7 +205,7 @@ namespace SteamRailway
                 S.TenderWater += melt;
             }
 
-            S.BoilerTemp += dT;
+            S.BoilerTemp += deltaTime;
 
             // A blown plug or a burst boiler cannot hold steam.
             if (S.PlugBlown || S.Exploded) S.BoilerTemp = Mathf.Min(S.BoilerTemp, 100f);
@@ -329,38 +329,38 @@ namespace SteamRailway
             BoilerExplosion.Play(this);
         }
 
-        void TickMotion(float dt)
+        void TickMotion(float deltaTime)
         {
-            if (dt <= 0f) return;
-            float a = 0f;
+            if (deltaTime <= 0f) return;
+            float firstValue = 0f;
 
             float traction = MaxTractionAccel * S.Regulator * Mathf.Clamp01(Pressure / MaxPressure) * S.Reverser;
             if (Pressure < 5f) traction = 0f;
-            a += traction;
+            firstValue += traction;
 
             // Gravity along the track (+Z of the train is forward).
-            a -= 9.81f * Train.transform.forward.y;
+            firstValue -= 9.81f * Train.transform.forward.y;
 
-            float v = Velocity;
-            float resist = RollingResistance + AirResistance * v * v;
+            float value = Velocity;
+            float resist = RollingResistance + AirResistance * value * value;
             float brake = 0f;
             if (S.SteamBrake && Pressure >= SteamBrakeMinPsi) brake += SteamBrakeDecel;
             if (S.HandBrake) brake += HandBrakeDecel;
 
-            v += a * dt;
-            float slow = (resist + brake) * dt;
-            if (Mathf.Abs(v) <= slow) v = 0f;
-            else v -= Mathf.Sign(v) * slow;
+            value += firstValue * deltaTime;
+            float slow = (resist + brake) * deltaTime;
+            if (Mathf.Abs(value) <= slow) value = 0f;
+            else value -= Mathf.Sign(value) * slow;
 
             // Ends of the line (velocity is the engine's own: + chimney first; along the line it is v * Facing).
-            var sc = Train.m_SplineController;
-            if (sc != null && sc.Spline != null)
+            var splineController = Train.m_SplineController;
+            if (splineController != null && splineController.Spline != null)
             {
-                float lineV = v * FacingSign;
-                if (sc.Position <= 0.01f && lineV < 0f) v = 0f;
-                if (sc.Position >= sc.Spline.Length - 0.01f && lineV > 0f) v = 0f;
+                float lineV = value * FacingSign;
+                if (splineController.Position <= 0.01f && lineV < 0f) value = 0f;
+                if (splineController.Position >= splineController.Spline.Length - 0.01f && lineV > 0f) value = 0f;
             }
-            Velocity = Mathf.Clamp(v, -MaxSpeed, MaxSpeed);
+            Velocity = Mathf.Clamp(value, -MaxSpeed, MaxSpeed);
         }
 
         public int FacingSign => S.Facing < 0 ? -1 : 1;
@@ -372,23 +372,23 @@ namespace SteamRailway
         /// cockpit needles from its pressure, so the simulation feeds those values.
         void PushToEngine()
         {
-            var st = Train.m_Engine.CurrentState;
+            var engineState = Train.m_Engine.CurrentState;
             float lineV = LineVelocity;
-            st.m_Velocity = lineV;
+            engineState.m_Velocity = lineV;
             // The game reads this sign as the way the train stands on the line (it turns the model round for -1),
             // so it is the engine's facing, not the sign of its speed.
-            st.m_LastVelocitySign = FacingSign;
-            st.m_SteamPressure = Pressure;
-            st.m_BrakesActive = S.SteamBrake || S.HandBrake;
-            st.m_ThrottlePosition = S.Reverser < 0 ? Il2CppTLD.SteamTrain.ThrottlePosition.Reverse
+            engineState.m_LastVelocitySign = FacingSign;
+            engineState.m_SteamPressure = Pressure;
+            engineState.m_BrakesActive = S.SteamBrake || S.HandBrake;
+            engineState.m_ThrottlePosition = S.Reverser < 0 ? Il2CppTLD.SteamTrain.ThrottlePosition.Reverse
                 : S.Reverser > 0 ? Il2CppTLD.SteamTrain.ThrottlePosition.Low : Il2CppTLD.SteamTrain.ThrottlePosition.Neutral;
 
-            var sc = Train.m_SplineController;
-            if (sc != null && Mathf.Abs(lineV) > 0.001f)
+            var splineController = Train.m_SplineController;
+            if (splineController != null && Mathf.Abs(lineV) > 0.001f)
             {
                 var dir = lineV < 0f ? Il2CppFluffyUnderware.Curvy.Controllers.MovementDirection.Backward
                                      : Il2CppFluffyUnderware.Curvy.Controllers.MovementDirection.Forward;
-                if (sc.MovementDirection != dir) sc.MovementDirection = dir;
+                if (splineController.MovementDirection != dir) splineController.MovementDirection = dir;
             }
             EnforceFacing();
         }
@@ -397,20 +397,20 @@ namespace SteamRailway
         /// also turns and locks the rotation, so this is applied before and after it every frame.
         public void EnforceFacing()
         {
-            var sc = Train.m_SplineController;
-            if (sc == null) return;
+            var splineController = Train.m_SplineController;
+            if (splineController == null) return;
             var axis = FacingSign > 0 ? Il2CppFluffyUnderware.Curvy.OrientationAxisEnum.Forward
                                       : Il2CppFluffyUnderware.Curvy.OrientationAxisEnum.Backward;
-            if (sc.OrientationAxis != axis) sc.OrientationAxis = axis;
-            if (!sc.IgnoreDirection) sc.IgnoreDirection = true;
-            if (sc.LockRotation) sc.LockRotation = false;
+            if (splineController.OrientationAxis != axis) splineController.OrientationAxis = axis;
+            if (!splineController.IgnoreDirection) splineController.IgnoreDirection = true;
+            if (splineController.LockRotation) splineController.LockRotation = false;
             // the game sets the direction of travel from the facing every frame: in reverse it must run backwards
-            float lv = LineVelocity;
-            if (Mathf.Abs(lv) > 0.001f)
+            float level = LineVelocity;
+            if (Mathf.Abs(level) > 0.001f)
             {
-                var dir = lv < 0f ? Il2CppFluffyUnderware.Curvy.Controllers.MovementDirection.Backward
+                var dir = level < 0f ? Il2CppFluffyUnderware.Curvy.Controllers.MovementDirection.Backward
                                   : Il2CppFluffyUnderware.Curvy.Controllers.MovementDirection.Forward;
-                if (sc.MovementDirection != dir) sc.MovementDirection = dir;
+                if (splineController.MovementDirection != dir) splineController.MovementDirection = dir;
             }
         }
 
@@ -440,15 +440,15 @@ namespace SteamRailway
 
         public void PourInWater(float litres) => S.TenderWater = Mathf.Min(TenderCapacity, S.TenderWater + litres);
 
-        public void AddSnow(float kg) => S.SnowKg = Mathf.Min(SnowCapacityKg, S.SnowKg + Mathf.Max(0f, kg));
+        public void AddSnow(float kilograms) => S.SnowKg = Mathf.Min(SnowCapacityKg, S.SnowKg + Mathf.Max(0f, kilograms));
 
         /// Why the steam pump cannot run now (null = it can).
-        public static string PumpError(SteamSim sim)
+        public static string PumpError(SteamSim simulation)
         {
-            if (sim.TenderSpace <= 0.5f) return L.T("Su tankı dolu.", "The water tank is full.");
-            if (Mathf.Abs(sim.Velocity) >= 0.1f) return L.T("Pompa için tren durmalı.", "The train must be stopped to pump.");
-            sim.WaterSourceDistance = WaterSources.NearestDistance(sim.Train.transform.position);
-            if (sim.WaterSourceDistance > WaterSources.HoseLength)
+            if (simulation.TenderSpace <= 0.5f) return L.T("Su tankı dolu.", "The water tank is full.");
+            if (Mathf.Abs(simulation.Velocity) >= 0.1f) return L.T("Pompa için tren durmalı.", "The train must be stopped to pump.");
+            simulation.WaterSourceDistance = WaterSources.NearestDistance(simulation.Train.transform.position);
+            if (simulation.WaterSourceDistance > WaterSources.HoseLength)
                 return L.T($"Hortum {WaterSources.HoseLength:0} m içinde açık suya (buz deliği, akarsu) ulaşmıyor.",
                            $"The hose can't reach open water (an ice hole or flowing water) within {WaterSources.HoseLength:0} m.");
             return null;

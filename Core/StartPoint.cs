@@ -19,9 +19,9 @@ namespace SteamRailway
             try
             {
                 if (!File.Exists(FilePath)) return null;
-                var sp = JsonSerializer.Deserialize<StartPoint>(File.ReadAllText(FilePath));
-                if (sp == null || string.IsNullOrEmpty(sp.Scene) || sp.Pos == null || sp.Pos.Length < 3) return null;
-                return sp;
+                var startPoint = JsonSerializer.Deserialize<StartPoint>(File.ReadAllText(FilePath));
+                if (startPoint == null || string.IsNullOrEmpty(startPoint.Scene) || startPoint.Pos == null || startPoint.Pos.Length < 3) return null;
+                return startPoint;
             }
             catch (System.Exception e)
             {

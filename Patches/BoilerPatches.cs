@@ -10,9 +10,9 @@ namespace SteamRailway.Patches
     {
         private static bool Prefix(SteamTrainEngine __instance)
         {
-            var sim = RailwayManager.GetSim(__instance.m_SteamTrain);
-            if (sim == null) return true;
-            sim.Tick();
+            var simulation = RailwayManager.GetSim(__instance.m_SteamTrain);
+            if (simulation == null) return true;
+            simulation.Tick();
             return false;
         }
     }
@@ -96,8 +96,8 @@ namespace SteamRailway.Patches
     {
         private static void Postfix(SteamTrain __instance)
         {
-            var sim = RailwayManager.GetSim(__instance);
-            sim?.EnforceFacing();
+            var simulation = RailwayManager.GetSim(__instance);
+            simulation?.EnforceFacing();
         }
     }
 }

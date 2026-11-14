@@ -24,42 +24,42 @@ namespace SteamRailway
         {
             var panel = Panel;
             if (panel == null) { CabControls.Message(L.T("Aktarım menüsü açılamadı.", "The transfer menu could not be opened.")); return; }
-            var s = new Panel_TransferTrainTowerLiquid.TransferSettings();
-            s.m_CanTransferToTrain = true;
-            s.m_CanTransferToInventory = false;
-            s.m_LiquidType = type;
-            s.m_SourceLocalizedId = sourceLocId;
-            s.m_SourceIcon = "ico_water_prep";
-            s.m_TotalCapacityLiters = ItemLiquidVolume.FromLiters(available);
-            s.m_MaxTrainCapacityLiters = ItemLiquidVolume.FromLiters(space);
-            s.m_DeltaLiters = ItemLiquidVolume.FromLiters(delta);
-            s.m_TransferDurationBaseSeconds = 1f;
-            s.m_TransferDurationSecondsPerLiter = secondsPerLitre;
-            s.m_TransferDurationPassTimeMinutesPerLiter = minutesPerLitre;
-            s.m_TransferLiquidAudioEvent = H.Ev();
-            Action<ItemLiquidVolume, Panel_TransferTrainTowerLiquid.TransferAction> cb = (v, _) =>
+            var settings = new Panel_TransferTrainTowerLiquid.TransferSettings();
+            settings.m_CanTransferToTrain = true;
+            settings.m_CanTransferToInventory = false;
+            settings.m_LiquidType = type;
+            settings.m_SourceLocalizedId = sourceLocId;
+            settings.m_SourceIcon = "ico_water_prep";
+            settings.m_TotalCapacityLiters = ItemLiquidVolume.FromLiters(available);
+            settings.m_MaxTrainCapacityLiters = ItemLiquidVolume.FromLiters(space);
+            settings.m_DeltaLiters = ItemLiquidVolume.FromLiters(delta);
+            settings.m_TransferDurationBaseSeconds = 1f;
+            settings.m_TransferDurationSecondsPerLiter = secondsPerLitre;
+            settings.m_TransferDurationPassTimeMinutesPerLiter = minutesPerLitre;
+            settings.m_TransferLiquidAudioEvent = H.Ev();
+            Action<ItemLiquidVolume, Panel_TransferTrainTowerLiquid.TransferAction> callback = (v, _) =>
             {
                 try { onDone(Litres(v)); }
                 catch (Exception e) { SteamRailwayMod.Log.Error($"Transfer failed: {e}"); }
             };
-            s.m_OnTransferLiquid = cb;
-            panel.ShowLiquidTransfer(s);
+            settings.m_OnTransferLiquid = callback;
+            panel.ShowLiquidTransfer(settings);
         }
 
         // ------------------------------------------------------------------ inventory water
 
-        public static void PourInventory(SteamSim sim)
+        public static void PourInventory(SteamSim simulation)
         {
-            var inv = GameManager.GetInventoryComponent();
-            float nonPotable = Volume(inv.GetNonPotableWaterSupply());
-            float potable = Volume(inv.GetPotableWaterSupply());
-            if (sim.TenderSpace <= 0.01f) { CabControls.Message(L.T("Su tankı dolu.", "The water tank is full.")); return; }
+            var inventory = GameManager.GetInventoryComponent();
+            float nonPotable = Volume(inventory.GetNonPotableWaterSupply());
+            float potable = Volume(inventory.GetPotableWaterSupply());
+            if (simulation.TenderSpace <= 0.01f) { CabControls.Message(L.T("Su tankı dolu.", "The water tank is full.")); return; }
             if (nonPotable + potable <= 0.01f) { CabControls.Message(L.T("Envanterinde su yok.", "You have no water.")); return; }
             var type = nonPotable > 0.01f ? LiquidType.GetNonPotableWater() : LiquidType.GetPotableWater();
             Show(type, nonPotable > 0.01f ? "GAMEPLAY_WaterNonPotable" : "GAMEPLAY_WaterPotable",
-                 nonPotable + potable, sim.TenderSpace, 0.5f, 0.05f, 0.05f, litres =>
+                 nonPotable + potable, simulation.TenderSpace, 0.5f, 0.05f, 0.05f, litres =>
             {
-                float poured = WaterTransfer.PourInventoryIntoTender(sim, litres);
+                float poured = WaterTransfer.PourInventoryIntoTender(simulation, litres);
                 if (poured > 0f) TrainSounds.Play(TrainSounds.PourWater, GameManager.GetPlayerObject());
                 CabControls.Message(L.T($"Tanka {poured:0.0} L su döküldü.", $"Poured {poured:0.0} L of water into the tank."));
             });
@@ -70,20 +70,20 @@ namespace SteamRailway
 
         // ------------------------------------------------------------------ steam pump
 
-        public static void Pump(SteamSim sim)
+        public static void Pump(SteamSim simulation)
         {
-            string error = SteamSim.PumpError(sim);
+            string error = SteamSim.PumpError(simulation);
             if (error != null) { CabControls.Message(error); return; }
-            bool steam = sim.PumpBySteam;
-            if (steam) SynthSounds.PlayValve(sim.Train);
+            bool steam = simulation.PumpBySteam;
+            if (steam) SynthSounds.PlayValve(simulation.Train);
             else CabControls.Message(L.T($"Buhar {SteamSim.PumpMinPsi:0} PSI'ın altında: pompa elle çalıştırılıyor (yavaş).",
                                          $"Steam is below {SteamSim.PumpMinPsi:0} PSI: working the pump by hand (slow)."));
             float flow = steam ? SteamSim.PumpFlow : SteamSim.HandPumpFlow;
-            Show(LiquidType.GetNonPotableWater(), "GAMEPLAY_Water", sim.TenderSpace, sim.TenderSpace, steam ? 10f : 5f,
+            Show(LiquidType.GetNonPotableWater(), "GAMEPLAY_Water", simulation.TenderSpace, simulation.TenderSpace, steam ? 10f : 5f,
                  0.01f, 1f / flow, litres =>
             {
-                float pumped = sim.PumpIn(litres, steam);
-                TrainSounds.Play(TrainSounds.PumpWater, TrainSounds.Cab(sim.Train));
+                float pumped = simulation.PumpIn(litres, steam);
+                TrainSounds.Play(TrainSounds.PumpWater, TrainSounds.Cab(simulation.Train));
                 CabControls.Message(steam
                     ? L.T($"Pompa tanka {pumped:0} L su çekti.", $"The pump drew {pumped:0} L of water into the tank.")
                     : L.T($"El pompasıyla tanka {pumped:0} L su çekildi.", $"Hand-pumped {pumped:0} L of water into the tank."));
@@ -92,18 +92,18 @@ namespace SteamRailway
 
         // ------------------------------------------------------------------ snow
 
-        public static void ShovelSnow(SteamSim sim)
+        public static void ShovelSnow(SteamSim simulation)
         {
             if (GameManager.GetWeatherComponent().IsIndoorEnvironment()) { CabControls.Message(L.T("Burada kar yok.", "There is no snow here.")); return; }
-            float room = Mathf.Min(SteamSim.SnowCapacityKg - sim.S.SnowKg, sim.TenderSpace - sim.S.SnowKg);
+            float room = Mathf.Min(SteamSim.SnowCapacityKg - simulation.S.SnowKg, simulation.TenderSpace - simulation.S.SnowKg);
             if (room < 1f) { CabControls.Message(L.T("Tankta daha fazla kara yer yok.", "There is no room for more snow in the tank.")); return; }
             Show(LiquidType.GetNonPotableWater(), "GAMEPLAY_Snow", room, room, 5f,
-                 0.04f, SteamSim.ShovelMinutesPerKg, kg =>
+                 0.04f, SteamSim.ShovelMinutesPerKg, kilograms =>
             {
-                sim.AddSnow(kg);
+                simulation.AddSnow(kilograms);
                 TrainSounds.Play(TrainSounds.Snow, GameManager.GetPlayerObject());
-                CabControls.Message(L.T($"Tanka {kg:0} kg kar küreklendi ({sim.S.SnowKg:0} kg eriyor).",
-                                        $"Shovelled {kg:0} kg of snow into the tank ({sim.S.SnowKg:0} kg melting)."));
+                CabControls.Message(L.T($"Tanka {kilograms:0} kg kar küreklendi ({simulation.S.SnowKg:0} kg eriyor).",
+                                        $"Shovelled {kilograms:0} kg of snow into the tank ({simulation.S.SnowKg:0} kg melting)."));
             });
         }
     }

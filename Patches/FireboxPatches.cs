@@ -12,8 +12,8 @@ namespace SteamRailway.Patches
         private static void Postfix(FireplaceInteraction __instance, ref string __result)
         {
             var train = __instance.GetComponentInParent<SteamTrain>();
-            var sim = train != null ? RailwayManager.GetSim(train) : null;
-            if (sim != null) __result = FireboxControl.HoverText(sim);
+            var simulation = train != null ? RailwayManager.GetSim(train) : null;
+            if (simulation != null) __result = FireboxControl.HoverText(simulation);
         }
     }
 
@@ -24,11 +24,11 @@ namespace SteamRailway.Patches
         private static bool Prefix(FireplaceInteraction __instance, ref bool __result)
         {
             var train = __instance.GetComponentInParent<SteamTrain>();
-            var sim = train != null ? RailwayManager.GetSim(train) : null;
-            if (sim == null || sim.FireBurning) return true;
+            var simulation = train != null ? RailwayManager.GetSim(train) : null;
+            if (simulation == null || simulation.FireBurning) return true;
             string error = null;
-            if (sim.S.Exploded) error = L.T("Kazan patlamış: önce onarılmalı.", "The boiler has burst: repair it first.");
-            else if (sim.S.PlugBlown && SteamSim.Mode == Realism.Medium) error = L.T("Eriyen tapa onarılmadan ocak yakılamaz.", "The fire can't be lit until the fusible plug is replaced.");
+            if (simulation.S.Exploded) error = L.T("Kazan patlamış: önce onarılmalı.", "The boiler has burst: repair it first.");
+            else if (simulation.S.PlugBlown && SteamSim.Mode == Realism.Medium) error = L.T("Eriyen tapa onarılmadan ocak yakılamaz.", "The fire can't be lit until the fusible plug is replaced.");
             if (error == null) return true;
             CabControls.Message(error);
             __result = false;
@@ -46,11 +46,11 @@ namespace SteamRailway.Patches
         private static void Postfix(Panel_FeedFire __instance, GameObject go, ref bool __result)
         {
             if (!__result || go == null) return;
-            var fi = __instance.m_FireplaceInteraction;
-            var train = fi != null ? fi.GetComponentInParent<SteamTrain>() : null;
+            var fireplace = __instance.m_FireplaceInteraction;
+            var train = fireplace != null ? fireplace.GetComponentInParent<SteamTrain>() : null;
             if (train == null || !RailwayManager.IsOurTrain(train)) return;
-            var gi = go.GetComponent<GearItem>();
-            if (gi != null && gi.name.StartsWith("GEAR_Coal")) return;
+            var gearItem = go.GetComponent<GearItem>();
+            if (gearItem != null && gearItem.name.StartsWith("GEAR_Coal")) return;
             __result = false;
         }
     }
@@ -64,11 +64,11 @@ namespace SteamRailway.Patches
     {
         public static bool Refuses(Panel_FeedFire panel)
         {
-            var fi = panel != null ? panel.m_FireplaceInteraction : null;
-            var train = fi != null ? fi.GetComponentInParent<SteamTrain>() : null;
+            var fireplace = panel != null ? panel.m_FireplaceInteraction : null;
+            var train = fireplace != null ? fireplace.GetComponentInParent<SteamTrain>() : null;
             if (train == null || !RailwayManager.IsOurTrain(train)) return false;
-            var sel = panel.GetSelectedFuelSource();
-            if (sel != null && sel.name.StartsWith("GEAR_Coal")) return false;
+            var selectedItem = panel.GetSelectedFuelSource();
+            if (selectedItem != null && selectedItem.name.StartsWith("GEAR_Coal")) return false;
             CabControls.Message(L.T("Ocağa yalnızca kömür atılır.", "Only coal goes into the firebox."));
             return true;
         }

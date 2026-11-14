@@ -68,17 +68,17 @@ namespace SteamRailway
         static string FilePath(string scene) => Path.Combine(RouteStore.FolderPath, "Edits", scene + ".json");
         public static int Count => s_File.Edits.Count;
 
-        static float[] F(Vector3 v) => new[] { R3(v.x), R3(v.y), R3(v.z) };
+        static float[] F(Vector3 vector) => new[] { R3(vector.x), R3(vector.y), R3(vector.z) };
         static float[] F(Quaternion q) => new[] { R5(q.x), R5(q.y), R5(q.z), R5(q.w) };
-        static float R3(float f) => (float)System.Math.Round(f, 3);
-        static float R5(float f) => (float)System.Math.Round(f, 5);
+        static float R3(float factor) => (float)System.Math.Round(factor, 3);
+        static float R5(float factor) => (float)System.Math.Round(factor, 5);
         static Vector3 V(float[] a) => a != null && a.Length >= 3 ? new Vector3(a[0], a[1], a[2]) : Vector3.zero;
         static Quaternion Q(float[] a) => a != null && a.Length >= 4 ? new Quaternion(a[0], a[1], a[2], a[3]) : Quaternion.identity;
 
         /// Reads the region's edits and applies them (call when the region is built, before the railway).
         public static void ApplyScene(string scene)
         {
-            foreach (var c in s_Copies) if (c.Go != null) Object.Destroy(c.Go);
+            foreach (var copy in s_Copies) if (copy.Go != null) Object.Destroy(copy.Go);
             s_Copies.Clear();
             if (scene != s_Scene) { s_Live.Clear(); s_Claimed.Clear(); s_Scene = scene; }
             s_SceneStart = Time.time;
@@ -93,56 +93,56 @@ namespace SteamRailway
             if (s_File.Edits.Count == 0) return;
 
             var byName = new Dictionary<string, List<Transform>>();
-            foreach (var t in Resources.FindObjectsOfTypeAll<Transform>())
+            foreach (var transform in Resources.FindObjectsOfTypeAll<Transform>())
             {
-                if (t.gameObject.scene.name == null) continue;
-                if (!byName.TryGetValue(t.name, out var l)) byName[t.name] = l = new List<Transform>();
-                l.Add(t);
+                if (transform.gameObject.scene.name == null) continue;
+                if (!byName.TryGetValue(transform.name, out var points)) byName[transform.name] = points = new List<Transform>();
+                points.Add(transform);
             }
             int applied = 0, missing = 0;
-            foreach (var r in s_File.Edits)
+            foreach (var editRecord in s_File.Edits)
             {
-                if (r.Parent == InstTag) { ApplyInstance(r); applied++; continue; }
-                if (r.Parent == CopyTag) { if (SpawnCopy(r) != null) applied++; else missing++; continue; }
-                var t = Find(byName, r);
-                if (t == null) { missing++; continue; }
-                try { Put(t, r); applied++; }
-                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Edit of {r.Name}: {e.Message}"); }
+                if (editRecord.Parent == InstTag) { ApplyInstance(editRecord); applied++; continue; }
+                if (editRecord.Parent == CopyTag) { if (SpawnCopy(editRecord) != null) applied++; else missing++; continue; }
+                var transform = Find(byName, editRecord);
+                if (transform == null) { missing++; continue; }
+                try { Put(transform, editRecord); applied++; }
+                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Edit of {editRecord.Name}: {e.Message}"); }
             }
             SteamRailwayMod.Log.Msg($"{scene}: {applied} object edit(s) applied" + (missing > 0 ? $", {missing} object(s) not found." : "."));
         }
 
-        static Live NewLive(Transform t)
+        static Live NewLive(Transform transform)
         {
-            var live = new Live { T = t, OrigPos = t.position, OrigRot = t.rotation };
-            live.OrigBounds = BoundsOf(t, out live.HasBounds);
-            live.Inst.Add((InstancedHider.Prefix(t.name), t.position));
-            int n = 0;
-            foreach (var d in t.GetComponentsInChildren<Transform>(true))
+            var live = new Live { T = transform, OrigPos = transform.position, OrigRot = transform.rotation };
+            live.OrigBounds = BoundsOf(transform, out live.HasBounds);
+            live.Inst.Add((InstancedHider.Prefix(transform.name), transform.position));
+            int count = 0;
+            foreach (var d in transform.GetComponentsInChildren<Transform>(true))
             {
-                if (d == t || !d.name.Contains("_Prefab") || n++ > 300) continue;
+                if (d == transform || !d.name.Contains("_Prefab") || count++ > 300) continue;
                 live.Inst.Add((InstancedHider.Prefix(d.name), d.position));
             }
-            s_Live[t.Pointer] = live;
+            s_Live[transform.Pointer] = live;
             return live;
         }
 
-        public static Bounds BoundsOf(Transform t, out bool any)
+        public static Bounds BoundsOf(Transform transform, out bool any)
         {
             any = false;
-            var b = new Bounds(t.position, Vector3.zero);
-            foreach (var r in t.GetComponentsInChildren<Renderer>(false))
+            var otherBounds = new Bounds(transform.position, Vector3.zero);
+            foreach (var renderer in transform.GetComponentsInChildren<Renderer>(false))
             {
-                if (!r.enabled || r is ParticleSystemRenderer) continue;
-                if (!any) { b = r.bounds; any = true; } else b.Encapsulate(r.bounds);
+                if (!renderer.enabled || renderer is ParticleSystemRenderer) continue;
+                if (!any) { otherBounds = renderer.bounds; any = true; } else otherBounds.Encapsulate(renderer.bounds);
             }
             if (!any)
-                foreach (var c in t.GetComponentsInChildren<Collider>(false))
+                foreach (var collider in transform.GetComponentsInChildren<Collider>(false))
                 {
-                    if (!c.enabled) continue;
-                    if (!any) { b = c.bounds; any = true; } else b.Encapsulate(c.bounds);
+                    if (!collider.enabled) continue;
+                    if (!any) { otherBounds = collider.bounds; any = true; } else otherBounds.Encapsulate(collider.bounds);
                 }
-            return b;
+            return otherBounds;
         }
 
         // ---- copies of the region's objects (a missing bridge piece, another fence ...)
@@ -152,52 +152,52 @@ namespace SteamRailway
         sealed class CopyLive { public GameObject Go; public EditRecord R; }
         static readonly List<CopyLive> s_Copies = new List<CopyLive>();
 
-        public static bool IsCopy(Transform t) => t != null && t.name.StartsWith("SR_Copy_");
+        public static bool IsCopy(Transform transform) => transform != null && transform.name.StartsWith("SR_Copy_");
 
         /// The region object a copy is made from: same name, nearest place, then nearest turn (pieces of a curved
         /// bridge share one point and differ only in their turn).
-        static Transform CopySource(EditRecord r)
+        static Transform CopySource(EditRecord editRecord)
         {
-            var p = V(r.Pos); var q = Q(r.Rot);
-            Transform best = null; float bd = float.MaxValue;
-            foreach (var t in Resources.FindObjectsOfTypeAll<Transform>())
+            var point = V(editRecord.Pos); var q = Q(editRecord.Rot);
+            Transform best = null; float bestDistance = float.MaxValue;
+            foreach (var transform in Resources.FindObjectsOfTypeAll<Transform>())
             {
-                if (t.gameObject.scene.name == null || t.name != r.Name) continue;
-                float d = (t.position - p).sqrMagnitude * 100f + Quaternion.Angle(t.rotation, q);
-                if (d < bd) { bd = d; best = t; }
+                if (transform.gameObject.scene.name == null || transform.name != editRecord.Name) continue;
+                float distance = (transform.position - point).sqrMagnitude * 100f + Quaternion.Angle(transform.rotation, q);
+                if (distance < bestDistance) { bestDistance = distance; best = transform; }
             }
             return best;
         }
 
-        static GameObject SpawnCopy(EditRecord r)
+        static GameObject SpawnCopy(EditRecord editRecord)
         {
-            var src = CopySource(r);
-            if (src == null) return null;
-            var go = Object.Instantiate(src.gameObject);
-            go.name = "SR_Copy_" + r.Name;
-            go.transform.SetPositionAndRotation(V(r.NewPos), Q(r.NewRot));
+            var source = CopySource(editRecord);
+            if (source == null) return null;
+            var targetObject = Object.Instantiate(source.gameObject);
+            targetObject.name = "SR_Copy_" + editRecord.Name;
+            targetObject.transform.SetPositionAndRotation(V(editRecord.NewPos), Q(editRecord.NewRot));
             // the original may be one the railway hid (a replaced rail piece): the copy is shown
-            if (!go.activeSelf) go.SetActive(true);
-            foreach (var x in go.GetComponentsInChildren<Renderer>(true)) x.enabled = true;
-            foreach (var x in go.GetComponentsInChildren<LODGroup>(true)) x.enabled = true;
-            foreach (var x in go.GetComponentsInChildren<Collider>(true)) x.enabled = true;
-            s_Copies.Add(new CopyLive { Go = go, R = r });
-            return go;
+            if (!targetObject.activeSelf) targetObject.SetActive(true);
+            foreach (var renderer in targetObject.GetComponentsInChildren<Renderer>(true)) renderer.enabled = true;
+            foreach (var lodGroup in targetObject.GetComponentsInChildren<LODGroup>(true)) lodGroup.enabled = true;
+            foreach (var collider in targetObject.GetComponentsInChildren<Collider>(true)) collider.enabled = true;
+            s_Copies.Add(new CopyLive { Go = targetObject, R = editRecord });
+            return targetObject;
         }
 
         /// A copy of a region object, standing where the original stands (the editor then carries it away).
-        public static Transform AddCopy(Transform src)
+        public static Transform AddCopy(Transform source)
         {
-            var r = new EditRecord
+            var editRecord = new EditRecord
             {
-                Name = src.name, Parent = CopyTag, Pos = F(OriginalPosition(src)), Rot = F(OriginalRotation(src)),
-                NewPos = F(src.position), NewRot = F(src.rotation),
+                Name = source.name, Parent = CopyTag, Pos = F(OriginalPosition(source)), Rot = F(OriginalRotation(source)),
+                NewPos = F(source.position), NewRot = F(source.rotation),
             };
-            var go = SpawnCopy(r);
-            if (go == null) return null;
-            s_File.Edits.Add(r);
+            var targetObject = SpawnCopy(editRecord);
+            if (targetObject == null) return null;
+            s_File.Edits.Add(editRecord);
             Save();
-            return go.transform;
+            return targetObject.transform;
         }
 
         /// A copy was put down somewhere new.
@@ -232,89 +232,89 @@ namespace SteamRailway
 
         const string InstTag = "@instance";
 
-        static void ApplyInstance(EditRecord r)
+        static void ApplyInstance(EditRecord editRecord)
         {
-            var pos = V(r.Pos);
-            if (r.Hidden) { InstancedHider.Set(r.Name, pos, false, Matrix4x4.identity); return; }
-            var delta = Matrix4x4.TRS(V(r.NewPos), Q(r.NewRot), Vector3.one) * Matrix4x4.TRS(pos, Q(r.Rot), Vector3.one).inverse;
-            InstancedHider.Set(r.Name, pos, true, delta);
+            var position = V(editRecord.Pos);
+            if (editRecord.Hidden) { InstancedHider.Set(editRecord.Name, position, false, Matrix4x4.identity); return; }
+            var delta = Matrix4x4.TRS(V(editRecord.NewPos), Q(editRecord.NewRot), Vector3.one) * Matrix4x4.TRS(position, Q(editRecord.Rot), Vector3.one).inverse;
+            InstancedHider.Set(editRecord.Name, position, true, delta);
         }
 
-        public static EditRecord InstRecord(InstancedHider.InstPick p)
+        public static EditRecord InstRecord(InstancedHider.InstPick instancePick)
         {
-            foreach (var x in s_File.Edits)
-                if (x.Parent == InstTag && x.Name == p.Prefix && (V(x.Pos) - p.OrigPos).sqrMagnitude <= MatchDist * MatchDist) return x;
+            foreach (var editRecord in s_File.Edits)
+                if (editRecord.Parent == InstTag && editRecord.Name == instancePick.Prefix && (V(editRecord.Pos) - instancePick.OrigPos).sqrMagnitude <= MatchDist * MatchDist) return editRecord;
             return null;
         }
 
-        public static EditRecord InstHidden(InstancedHider.InstPick p) => new EditRecord
-        { Name = p.Prefix, Parent = InstTag, Pos = F(p.OrigPos), Rot = F(p.OrigRot), Hidden = true };
+        public static EditRecord InstHidden(InstancedHider.InstPick instancePick) => new EditRecord
+        { Name = instancePick.Prefix, Parent = InstTag, Pos = F(instancePick.OrigPos), Rot = F(instancePick.OrigRot), Hidden = true };
 
-        public static EditRecord InstMoved(InstancedHider.InstPick p, Vector3 pos, Quaternion rot) => new EditRecord
-        { Name = p.Prefix, Parent = InstTag, Pos = F(p.OrigPos), Rot = F(p.OrigRot), NewPos = F(pos), NewRot = F(rot) };
+        public static EditRecord InstMoved(InstancedHider.InstPick instancePick, Vector3 position, Quaternion rotation) => new EditRecord
+        { Name = instancePick.Prefix, Parent = InstTag, Pos = F(instancePick.OrigPos), Rot = F(instancePick.OrigRot), NewPos = F(position), NewRot = F(rotation) };
 
         /// While the editor carries an instanced object (nothing is written yet).
-        public static void PreviewInstance(InstancedHider.InstPick p, Vector3 pos, Quaternion rot)
+        public static void PreviewInstance(InstancedHider.InstPick instancePick, Vector3 position, Quaternion rotation)
         {
-            var delta = Matrix4x4.TRS(pos, rot, Vector3.one) * Matrix4x4.TRS(p.OrigPos, p.OrigRot, Vector3.one).inverse;
-            InstancedHider.Set(p.Prefix, p.OrigPos, true, delta);
+            var delta = Matrix4x4.TRS(position, rotation, Vector3.one) * Matrix4x4.TRS(instancePick.OrigPos, instancePick.OrigRot, Vector3.one).inverse;
+            InstancedHider.Set(instancePick.Prefix, instancePick.OrigPos, true, delta);
         }
 
         /// Puts an instanced object into the state of `r` (null = as the region made it) and writes the file.
-        public static void SetInstance(InstancedHider.InstPick p, EditRecord r)
+        public static void SetInstance(InstancedHider.InstPick instancePick, EditRecord editRecord)
         {
-            s_File.Edits.RemoveAll(x => x.Parent == InstTag && x.Name == p.Prefix && (V(x.Pos) - p.OrigPos).sqrMagnitude <= MatchDist * MatchDist);
-            if (r == null) InstancedHider.Remove(p.Prefix, p.OrigPos);
-            else { s_File.Edits.Add(r); ApplyInstance(r); }
+            s_File.Edits.RemoveAll(x => x.Parent == InstTag && x.Name == instancePick.Prefix && (V(x.Pos) - instancePick.OrigPos).sqrMagnitude <= MatchDist * MatchDist);
+            if (editRecord == null) InstancedHider.Remove(instancePick.Prefix, instancePick.OrigPos);
+            else { s_File.Edits.Add(editRecord); ApplyInstance(editRecord); }
             Save();
         }
 
-        static Transform Find(Dictionary<string, List<Transform>> byName, EditRecord r)
+        static Transform Find(Dictionary<string, List<Transform>> byName, EditRecord editRecord)
         {
-            if (r.Name == null || !byName.TryGetValue(r.Name, out var cands)) return null;
-            var p = V(r.Pos);
-            Transform best = null; float bd = MatchDist * MatchDist;
-            foreach (var c in cands)
+            if (editRecord.Name == null || !byName.TryGetValue(editRecord.Name, out var cands)) return null;
+            var point = V(editRecord.Pos);
+            Transform best = null; float bestDistance = MatchDist * MatchDist;
+            foreach (var child in cands)
             {
                 // an object already moved this session is known by where it was
-                var live = s_Live.TryGetValue(c.Pointer, out var lv) ? lv : null;
-                var o = live != null ? live.OrigPos : c.position;
-                float d = (o - p).sqrMagnitude;
-                if (d <= bd) { bd = d; best = c; }
+                var live = s_Live.TryGetValue(child.Pointer, out var lv) ? lv : null;
+                var origin = live != null ? live.OrigPos : child.position;
+                float distance = (origin - point).sqrMagnitude;
+                if (distance <= bestDistance) { bestDistance = distance; best = child; }
             }
             return best;
         }
 
         /// The record of an object (null: as the region made it).
-        public static EditRecord RecordOf(Transform t)
+        public static EditRecord RecordOf(Transform transform)
         {
-            if (t == null) return null;
-            return s_Live.TryGetValue(t.Pointer, out var l) ? l.R : null;
+            if (transform == null) return null;
+            return s_Live.TryGetValue(transform.Pointer, out var live) ? live.R : null;
         }
 
-        public static Vector3 OriginalPosition(Transform t) => s_Live.TryGetValue(t.Pointer, out var l) ? l.OrigPos : t.position;
-        public static Quaternion OriginalRotation(Transform t) => s_Live.TryGetValue(t.Pointer, out var l) ? l.OrigRot : t.rotation;
+        public static Vector3 OriginalPosition(Transform transform) => s_Live.TryGetValue(transform.Pointer, out var live) ? live.OrigPos : transform.position;
+        public static Quaternion OriginalRotation(Transform transform) => s_Live.TryGetValue(transform.Pointer, out var live) ? live.OrigRot : transform.rotation;
 
-        public static EditRecord Hidden(Transform t) => new EditRecord
+        public static EditRecord Hidden(Transform transform) => new EditRecord
         {
-            Name = t.name, Parent = t.parent != null ? t.parent.name : null,
-            Pos = F(OriginalPosition(t)), Rot = F(OriginalRotation(t)), Hidden = true,
+            Name = transform.name, Parent = transform.parent != null ? transform.parent.name : null,
+            Pos = F(OriginalPosition(transform)), Rot = F(OriginalRotation(transform)), Hidden = true,
         };
 
-        public static EditRecord Moved(Transform t, Vector3 pos, Quaternion rot) => new EditRecord
+        public static EditRecord Moved(Transform transform, Vector3 position, Quaternion rotation) => new EditRecord
         {
-            Name = t.name, Parent = t.parent != null ? t.parent.name : null,
-            Pos = F(OriginalPosition(t)), Rot = F(OriginalRotation(t)), NewPos = F(pos), NewRot = F(rot),
+            Name = transform.name, Parent = transform.parent != null ? transform.parent.name : null,
+            Pos = F(OriginalPosition(transform)), Rot = F(OriginalRotation(transform)), NewPos = F(position), NewRot = F(rotation),
         };
 
         /// Puts an object into the state of `r` (null = as the region made it) and writes the region's file.
-        public static void Set(Transform t, EditRecord r)
+        public static void Set(Transform transform, EditRecord editRecord)
         {
-            if (t == null) return;
-            var orig = OriginalPosition(t);
-            Put(t, r);
-            s_File.Edits.RemoveAll(x => x.Name == t.name && (V(x.Pos) - orig).sqrMagnitude <= MatchDist * MatchDist);
-            if (r != null) s_File.Edits.Add(r);
+            if (transform == null) return;
+            var orig = OriginalPosition(transform);
+            Put(transform, editRecord);
+            s_File.Edits.RemoveAll(x => x.Name == transform.name && (V(x.Pos) - orig).sqrMagnitude <= MatchDist * MatchDist);
+            if (editRecord != null) s_File.Edits.Add(editRecord);
             Save();
         }
 
@@ -330,21 +330,21 @@ namespace SteamRailway
             catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Writing the object edits failed: {e.Message}"); }
         }
 
-        static void Put(Transform t, EditRecord r)
+        static void Put(Transform transform, EditRecord editRecord)
         {
-            if (!s_Live.TryGetValue(t.Pointer, out var live))
+            if (!s_Live.TryGetValue(transform.Pointer, out var live))
             {
-                if (r == null) return;
-                live = NewLive(t);
+                if (editRecord == null) return;
+                live = NewLive(transform);
             }
             Restore(live);
-            live.R = r;
-            if (r == null) { s_Live.Remove(t.Pointer); return; }
+            live.R = editRecord;
+            if (editRecord == null) { s_Live.Remove(transform.Pointer); return; }
 
-            if (r.Hidden)
+            if (editRecord.Hidden)
             {
                 HideAll(live);
-                foreach (var (pre, op) in live.Inst) InstancedHider.Set(pre, op, false, Matrix4x4.identity);
+                foreach (var (prefix, originalPoint) in live.Inst) InstancedHider.Set(prefix, originalPoint, false, Matrix4x4.identity);
                 Claim(live);
                 HideLoot(live, true);
                 return;
@@ -352,9 +352,9 @@ namespace SteamRailway
 
             // moved: statically batched meshes cannot move with their object; they get movable copies first
             Detach(live);
-            var pos = V(r.NewPos);
-            var rot = Q(r.NewRot);
-            t.SetPositionAndRotation(pos, rot);
+            var position = V(editRecord.NewPos);
+            var rotation = Q(editRecord.NewRot);
+            transform.SetPositionAndRotation(position, rotation);
             SetInstanced(live);
             Claim(live);
             PoseLoot(live);
@@ -363,28 +363,28 @@ namespace SteamRailway
         /// Everything that draws or collides in the object (every renderer, whatever its state, is held off).
         static void HideAll(Live live)
         {
-            var t = live.T;
-            foreach (var x in t.GetComponentsInChildren<Renderer>(true)) { live.OffR.Add((x, x.enabled)); x.enabled = false; }
-            foreach (var x in t.GetComponentsInChildren<LODGroup>(true)) { live.OffL.Add((x, x.enabled)); x.enabled = false; }
-            foreach (var x in t.GetComponentsInChildren<Collider>(true)) { live.OffC.Add((x, x.enabled)); x.enabled = false; }
+            var transform = live.T;
+            foreach (var renderer in transform.GetComponentsInChildren<Renderer>(true)) { live.OffR.Add((renderer, renderer.enabled)); renderer.enabled = false; }
+            foreach (var lodGroup in transform.GetComponentsInChildren<LODGroup>(true)) { live.OffL.Add((lodGroup, lodGroup.enabled)); lodGroup.enabled = false; }
+            foreach (var collider in transform.GetComponentsInChildren<Collider>(true)) { live.OffC.Add((collider, collider.enabled)); collider.enabled = false; }
         }
 
         static void SetInstanced(Live live)
         {
-            var t = live.T;
-            var delta = Matrix4x4.TRS(t.position, t.rotation, Vector3.one) * Matrix4x4.TRS(live.OrigPos, live.OrigRot, Vector3.one).inverse;
-            foreach (var (pre, op) in live.Inst) InstancedHider.Set(pre, op, true, delta);
+            var transform = live.T;
+            var delta = Matrix4x4.TRS(transform.position, transform.rotation, Vector3.one) * Matrix4x4.TRS(live.OrigPos, live.OrigRot, Vector3.one).inverse;
+            foreach (var (prefix, originalPoint) in live.Inst) InstancedHider.Set(prefix, originalPoint, true, delta);
         }
 
         // ------------------------------------------------------------------ loot
 
         static Bounds ReachOf(Live live)
         {
-            var b = live.OrigBounds;
-            var lo = b.min - new Vector3(0.6f, 0.3f, 0.6f);
-            var hi = b.max + new Vector3(0.6f, 1.2f, 0.6f);
-            b.SetMinMax(lo, hi);
-            return b;
+            var bounds = live.OrigBounds;
+            var lo = bounds.min - new Vector3(0.6f, 0.3f, 0.6f);
+            var hi = bounds.max + new Vector3(0.6f, 1.2f, 0.6f);
+            bounds.SetMinMax(lo, hi);
+            return bounds;
         }
 
         /// Loose items and containers lying in the object's original area (not in the player's hands, not inside a
@@ -395,59 +395,59 @@ namespace SteamRailway
             var reach = ReachOf(live);
             bool moved = live.R != null && !live.R.Hidden;
             bool now = false;
-            var cur = moved ? BoundsOf(live.T, out now) : default(Bounds);
+            var currentBounds = moved ? BoundsOf(live.T, out now) : default(Bounds);
             // a physics query around the object (scanning every item of the scene costs tens of milliseconds)
             var hits = Physics.OverlapBox(reach.center, reach.extents, Quaternion.identity, ~0, QueryTriggerInteraction.Collide);
-            foreach (var h in hits)
+            foreach (var collider in hits)
             {
-                if (h == null) continue;
-                var gi = h.GetComponentInParent<Il2Cpp.GearItem>();
-                if (gi != null)
+                if (collider == null) continue;
+                var gearItem = collider.GetComponentInParent<Il2Cpp.GearItem>();
+                if (gearItem != null)
                 {
-                    if (gi.m_InPlayerInventory || gi.m_BeenInPlayerInventory || gi.m_InsideContainer || gi.m_IsInSatchel) continue;
-                    TryClaim(live, gi.transform, reach, moved && now, cur);
+                    if (gearItem.m_InPlayerInventory || gearItem.m_BeenInPlayerInventory || gearItem.m_InsideContainer || gearItem.m_IsInSatchel) continue;
+                    TryClaim(live, gearItem.transform, reach, moved && now, currentBounds);
                     continue;
                 }
-                var ct = h.GetComponentInParent<Il2Cpp.Container>();
-                if (ct != null) TryClaim(live, ct.transform, reach, moved && now, cur);
+                var container = collider.GetComponentInParent<Il2Cpp.Container>();
+                if (container != null) TryClaim(live, container.transform, reach, moved && now, currentBounds);
             }
         }
 
-        static void TryClaim(Live live, Transform it, Bounds reach, bool checkNow, Bounds cur)
+        static void TryClaim(Live live, Transform item, Bounds reach, bool checkNow, Bounds currentBounds)
         {
-            if (it == null || it == live.T || it.IsChildOf(live.T) || live.T.IsChildOf(it) || s_Claimed.Contains(it.Pointer)) return;
-            var p = it.position;
-            if (!reach.Contains(p)) return;
+            if (item == null || item == live.T || item.IsChildOf(live.T) || live.T.IsChildOf(item) || s_Claimed.Contains(item.Pointer)) return;
+            var point = item.position;
+            if (!reach.Contains(point)) return;
             // already standing in the moved object (saved there): it has been placed before
-            if (checkNow && cur.Contains(p)) return;
-            var l = new Loot { T = it, Pos = p, Rot = it.rotation };
-            foreach (var r in it.GetComponentsInChildren<Renderer>(true)) l.R.Add((r, r.enabled));
-            foreach (var c in it.GetComponentsInChildren<Collider>(true)) l.C.Add((c, c.enabled));
-            live.Loot.Add(l);
-            s_Claimed.Add(it.Pointer);
+            if (checkNow && currentBounds.Contains(point)) return;
+            var loot = new Loot { T = item, Pos = point, Rot = item.rotation };
+            foreach (var renderer in item.GetComponentsInChildren<Renderer>(true)) loot.R.Add((renderer, renderer.enabled));
+            foreach (var collider in item.GetComponentsInChildren<Collider>(true)) loot.C.Add((collider, collider.enabled));
+            live.Loot.Add(loot);
+            s_Claimed.Add(item.Pointer);
         }
 
         static void PoseLoot(Live live)
         {
             if (live.T == null || live.Loot.Count == 0) return;
-            var m = Matrix4x4.TRS(live.T.position, live.T.rotation, Vector3.one) * Matrix4x4.TRS(live.OrigPos, live.OrigRot, Vector3.one).inverse;
+            var matrix = Matrix4x4.TRS(live.T.position, live.T.rotation, Vector3.one) * Matrix4x4.TRS(live.OrigPos, live.OrigRot, Vector3.one).inverse;
             var dq = live.T.rotation * Quaternion.Inverse(live.OrigRot);
-            foreach (var l in live.Loot)
+            foreach (var loot in live.Loot)
             {
-                if (l.T == null) continue;
-                l.T.SetPositionAndRotation(m.MultiplyPoint3x4(l.Pos), dq * l.Rot);
-                var rb = l.T.GetComponent<Rigidbody>();
-                if (rb != null && !rb.isKinematic) { rb.velocity = Vector3.zero; rb.angularVelocity = Vector3.zero; }
+                if (loot.T == null) continue;
+                loot.T.SetPositionAndRotation(matrix.MultiplyPoint3x4(loot.Pos), dq * loot.Rot);
+                var body = loot.T.GetComponent<Rigidbody>();
+                if (body != null && !body.isKinematic) { body.velocity = Vector3.zero; body.angularVelocity = Vector3.zero; }
             }
         }
 
         static void HideLoot(Live live, bool hide)
         {
-            foreach (var l in live.Loot)
+            foreach (var loot in live.Loot)
             {
-                if (l.T == null) continue;
-                foreach (var (r, was) in l.R) if (r != null) r.enabled = hide ? false : was;
-                foreach (var (c, was) in l.C) if (c != null) c.enabled = hide ? false : was;
+                if (loot.T == null) continue;
+                foreach (var (renderer, wasEnabled) in loot.R) if (renderer != null) renderer.enabled = hide ? false : wasEnabled;
+                foreach (var (collider, was) in loot.C) if (collider != null) collider.enabled = hide ? false : was;
             }
         }
 
@@ -463,21 +463,21 @@ namespace SteamRailway
             foreach (var live in s_Live.Values)
             {
                 if (live.T == null || live.R == null || !live.R.Hidden) continue;
-                foreach (var (r, _) in live.OffR) if (r != null && r.enabled) r.enabled = false;
-                foreach (var (c, _) in live.OffC) if (c != null && c.enabled) c.enabled = false;
-                foreach (var (g, _) in live.OffL) if (g != null && g.enabled) g.enabled = false;
+                foreach (var (renderer, _) in live.OffR) if (renderer != null && renderer.enabled) renderer.enabled = false;
+                foreach (var (collider, _) in live.OffC) if (collider != null && collider.enabled) collider.enabled = false;
+                foreach (var (lodGroup, _) in live.OffL) if (lodGroup != null && lodGroup.enabled) lodGroup.enabled = false;
             }
             if (s_Carrying || Time.time < s_NextScan) return;
             // the scene scan: often while the region is new (loot is still being spawned), seldom afterwards
             s_NextScan = Time.time + (Time.time - s_SceneStart < 60f ? 3f : 12f);
             var all = new List<Live>(s_Live.Values);
-            var cam = Il2Cpp.GameManager.GetVpFPSCamera();
-            var from = cam != null ? cam.transform.position : Vector3.zero;
+            var firstPersonCamera = Il2Cpp.GameManager.GetVpFPSCamera();
+            var from = firstPersonCamera != null ? firstPersonCamera.transform.position : Vector3.zero;
             foreach (var live in all)
             {
                 if (live.T == null || live.R == null) continue;
                 // only edits around the player (the scan costs a little each time)
-                if (cam != null && live.HasBounds && live.OrigBounds.SqrDistance(from) > 150f * 150f) continue;
+                if (firstPersonCamera != null && live.HasBounds && live.OrigBounds.SqrDistance(from) > 150f * 150f) continue;
                 int before = live.Loot.Count;
                 Claim(live);
                 if (live.Loot.Count != before && !live.R.Hidden) PoseLoot(live);
@@ -486,9 +486,9 @@ namespace SteamRailway
         }
 
         /// The editor picks an object up: its picture is made movable (nothing is written yet).
-        public static void BeginMove(Transform t)
+        public static void BeginMove(Transform transform)
         {
-            if (!s_Live.TryGetValue(t.Pointer, out var live)) live = NewLive(t);
+            if (!s_Live.TryGetValue(transform.Pointer, out var live)) live = NewLive(transform);
             s_Carrying = true;
             Detach(live);
             Claim(live);
@@ -497,41 +497,41 @@ namespace SteamRailway
         public static void EndMove() => s_Carrying = false;
 
         /// While the editor carries an object: where it is now (no file written).
-        public static void Preview(Transform t, Vector3 pos, Quaternion rot)
+        public static void Preview(Transform transform, Vector3 position, Quaternion rotation)
         {
-            if (!s_Live.TryGetValue(t.Pointer, out var live)) return;
-            t.SetPositionAndRotation(pos, rot);
+            if (!s_Live.TryGetValue(transform.Pointer, out var live)) return;
+            transform.SetPositionAndRotation(position, rotation);
             SetInstanced(live);
             PoseLoot(live);
         }
 
         static void Restore(Live live)
         {
-            var t = live.T;
-            foreach (var c in live.Clones) if (c != null) Object.Destroy(c);
+            var transform = live.T;
+            foreach (var childObject in live.Clones) if (childObject != null) Object.Destroy(childObject);
             live.Clones.Clear();
-            foreach (var (x, was) in live.OffR) if (x != null) x.enabled = was;
-            foreach (var (x, was) in live.OffL) if (x != null) x.enabled = was;
-            foreach (var (x, was) in live.OffC) if (x != null) x.enabled = was;
+            foreach (var (renderer, wasEnabled) in live.OffR) if (renderer != null) renderer.enabled = wasEnabled;
+            foreach (var (lodGroup, was) in live.OffL) if (lodGroup != null) lodGroup.enabled = was;
+            foreach (var (collider, was) in live.OffC) if (collider != null) collider.enabled = was;
             live.OffR.Clear(); live.OffL.Clear(); live.OffC.Clear();
-            if (t != null) t.SetPositionAndRotation(live.OrigPos, live.OrigRot);
+            if (transform != null) transform.SetPositionAndRotation(live.OrigPos, live.OrigRot);
             // the loot goes back where it lay
             if (live.Loot.Count > 0)
             {
                 HideLoot(live, false);
                 PoseLoot(live);
-                foreach (var l in live.Loot) if (l.T != null) s_Claimed.Remove(l.T.Pointer);
+                foreach (var loot in live.Loot) if (loot.T != null) s_Claimed.Remove(loot.T.Pointer);
                 live.Loot.Clear();
             }
-            foreach (var (pre, op) in live.Inst) InstancedHider.Remove(pre, op);
+            foreach (var (prefix, originalPoint) in live.Inst) InstancedHider.Remove(prefix, originalPoint);
         }
 
-        static bool HasRenderers(Transform t) => t.GetComponentsInChildren<Renderer>(true).Length > 0;
+        static bool HasRenderers(Transform transform) => transform.GetComponentsInChildren<Renderer>(true).Length > 0;
 
         /// Is part of the object statically batched (its picture fixed in a combined mesh)?
-        public static bool IsStatic(Transform t)
+        public static bool IsStatic(Transform transform)
         {
-            foreach (var r in t.GetComponentsInChildren<MeshRenderer>(true)) if (r.isPartOfStaticBatch) return true;
+            foreach (var meshRenderer in transform.GetComponentsInChildren<MeshRenderer>(true)) if (meshRenderer.isPartOfStaticBatch) return true;
             return false;
         }
 
@@ -540,68 +540,68 @@ namespace SteamRailway
         /// Objects with LODs keep only their most detailed level while they are moved.
         static void Detach(Live live)
         {
-            var t = live.T;
-            if (!IsStatic(t)) return;
+            var staticRoot = live.T;
+            if (!IsStatic(staticRoot)) return;
             var lod0 = new HashSet<System.IntPtr>();
             bool hasLods = false;
-            foreach (var lg in t.GetComponentsInChildren<LODGroup>(true))
+            foreach (var lodGroup in staticRoot.GetComponentsInChildren<LODGroup>(true))
             {
-                var lods = lg.GetLODs();
+                var lods = lodGroup.GetLODs();
                 if (lods == null || lods.Length == 0) continue;
                 hasLods = true;
-                foreach (var r in lods[0].renderers) if (r != null) lod0.Add(r.Pointer);
-                if (lg.enabled) { lg.enabled = false; live.OffL.Add((lg, true)); }
+                foreach (var renderer in lods[0].renderers) if (renderer != null) lod0.Add(renderer.Pointer);
+                if (lodGroup.enabled) { lodGroup.enabled = false; live.OffL.Add((lodGroup, true)); }
             }
             int made = 0, failed = 0;
-            foreach (var r in t.GetComponentsInChildren<MeshRenderer>(true))
+            foreach (var meshRenderer in staticRoot.GetComponentsInChildren<MeshRenderer>(true))
             {
-                if (!r.enabled) continue;
-                bool keep = !hasLods || lod0.Contains(r.Pointer);
-                if (!keep) { r.enabled = false; live.OffR.Add((r, true)); continue; }
-                if (!r.isPartOfStaticBatch) continue;
-                var mesh = CopyMesh(r);
+                if (!meshRenderer.enabled) continue;
+                bool keep = !hasLods || lod0.Contains(meshRenderer.Pointer);
+                if (!keep) { meshRenderer.enabled = false; live.OffR.Add((meshRenderer, true)); continue; }
+                if (!meshRenderer.isPartOfStaticBatch) continue;
+                var mesh = CopyMesh(meshRenderer);
                 if (mesh == null) { failed++; continue; }
-                var go = new GameObject("SR_Moved_" + r.gameObject.name);
-                go.layer = r.gameObject.layer;
-                go.transform.SetParent(r.transform, false);
-                go.AddComponent<MeshFilter>().sharedMesh = mesh;
-                var mr = go.AddComponent<MeshRenderer>();
-                mr.sharedMaterials = r.sharedMaterials;
-                mr.shadowCastingMode = r.shadowCastingMode;
-                mr.receiveShadows = r.receiveShadows;
-                live.Clones.Add(go);
-                r.enabled = false;
-                live.OffR.Add((r, true));
+                var targetObject = new GameObject("SR_Moved_" + meshRenderer.gameObject.name);
+                targetObject.layer = meshRenderer.gameObject.layer;
+                targetObject.transform.SetParent(meshRenderer.transform, false);
+                targetObject.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var mr = targetObject.AddComponent<MeshRenderer>();
+                mr.sharedMaterials = meshRenderer.sharedMaterials;
+                mr.shadowCastingMode = meshRenderer.shadowCastingMode;
+                mr.receiveShadows = meshRenderer.receiveShadows;
+                live.Clones.Add(targetObject);
+                meshRenderer.enabled = false;
+                live.OffR.Add((meshRenderer, true));
                 made++;
             }
             if (failed > 0)
-                SteamRailwayMod.Log.Warning($"{t.name}: {failed} part(s) are fixed in the region's combined mesh and could not be copied; they stay where they were.");
-            else if (made > 0) SteamRailwayMod.Debug($"{t.name}: {made} static part(s) copied so they can move.");
+                SteamRailwayMod.Log.Warning($"{staticRoot.name}: {failed} part(s) are fixed in the region's combined mesh and could not be copied; they stay where they were.");
+            else if (made > 0) SteamRailwayMod.Debug($"{staticRoot.name}: {made} static part(s) copied so they can move.");
         }
 
         /// The renderer's own mesh in its local space.
-        static Mesh CopyMesh(MeshRenderer r)
+        static Mesh CopyMesh(MeshRenderer meshRenderer)
         {
-            var mf = r.GetComponent<MeshFilter>();
-            var combined = mf != null ? mf.sharedMesh : null;
+            var meshFilter = meshRenderer.GetComponent<MeshFilter>();
+            var combined = meshFilter != null ? meshFilter.sharedMesh : null;
             if (combined != null && combined.isReadable)
             {
-                try { var m = Cut(r, combined); if (m != null) return m; }
-                catch (System.Exception e) { SteamRailwayMod.Debug($"Cutting {r.name} out of the combined mesh: {e.Message}"); }
+                try { var mesh = Cut(meshRenderer, combined); if (mesh != null) return mesh; }
+                catch (System.Exception e) { SteamRailwayMod.Debug($"Cutting {meshRenderer.name} out of the combined mesh: {e.Message}"); }
             }
-            return ByName(r);
+            return ByName(meshRenderer);
         }
 
-        static Mesh Cut(MeshRenderer r, Mesh combined)
+        static Mesh Cut(MeshRenderer meshRenderer, Mesh combined)
         {
-            int start = r.subMeshStartIndex;
-            int count = r.sharedMaterials.Length;
+            int start = meshRenderer.subMeshStartIndex;
+            int count = meshRenderer.sharedMaterials.Length;
             if (start < 0 || start + count > combined.subMeshCount) return null;
-            var root = r.staticBatchRootTransform;
+            var root = meshRenderer.staticBatchRootTransform;
             var toWorld = root != null ? root.localToWorldMatrix : Matrix4x4.identity;
-            var toLocal = r.transform.worldToLocalMatrix * toWorld;
-            var sv = combined.vertices; var sn = combined.normals; var st = combined.tangents; var su = combined.uv;
-            bool hasN = sn.Length == sv.Length, hasT = st.Length == sv.Length, hasU = su.Length == sv.Length;
+            var toLocal = meshRenderer.transform.worldToLocalMatrix * toWorld;
+            var sv = combined.vertices; var sn = combined.normals; var st = combined.tangents; var uvs = combined.uv;
+            bool hasN = sn.Length == sv.Length, hasT = st.Length == sv.Length, hasU = uvs.Length == sv.Length;
             var map = new Dictionary<int, int>();
             var v = new List<Vector3>(); var n = new List<Vector3>(); var tg = new List<Vector4>(); var uv = new List<Vector2>();
             var subs = new List<int[]>();
@@ -609,50 +609,50 @@ namespace SteamRailway
             {
                 var tris = combined.GetTriangles(s);
                 var outT = new int[tris.Length];
-                for (int i = 0; i < tris.Length; i++)
+                for (int index = 0; index < tris.Length; index++)
                 {
-                    int k = tris[i];
-                    if (!map.TryGetValue(k, out int ni))
+                    int deepIndex = tris[index];
+                    if (!map.TryGetValue(deepIndex, out int ni))
                     {
-                        ni = v.Count; map[k] = ni;
-                        v.Add(toLocal.MultiplyPoint3x4(sv[k]));
-                        if (hasN) n.Add(toLocal.MultiplyVector(sn[k]).normalized);
-                        if (hasT) { var d = toLocal.MultiplyVector(new Vector3(st[k].x, st[k].y, st[k].z)).normalized; tg.Add(new Vector4(d.x, d.y, d.z, st[k].w)); }
-                        if (hasU) uv.Add(su[k]);
+                        ni = v.Count; map[deepIndex] = ni;
+                        v.Add(toLocal.MultiplyPoint3x4(sv[deepIndex]));
+                        if (hasN) n.Add(toLocal.MultiplyVector(sn[deepIndex]).normalized);
+                        if (hasT) { var direction = toLocal.MultiplyVector(new Vector3(st[deepIndex].x, st[deepIndex].y, st[deepIndex].z)).normalized; tg.Add(new Vector4(direction.x, direction.y, direction.z, st[deepIndex].w)); }
+                        if (hasU) uv.Add(uvs[deepIndex]);
                     }
-                    outT[i] = ni;
+                    outT[index] = ni;
                 }
                 subs.Add(outT);
             }
             if (v.Count == 0) return null;
-            var m = new Mesh { name = r.name + "_Moved" };
-            if (v.Count > 65000) m.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-            m.SetVertices(new Il2CppStructArray<Vector3>(v.ToArray()));
-            if (hasN) m.SetNormals(new Il2CppStructArray<Vector3>(n.ToArray()));
-            if (hasT) m.SetTangents(new Il2CppStructArray<Vector4>(tg.ToArray()));
-            if (hasU) m.SetUVs(0, new Il2CppStructArray<Vector2>(uv.ToArray()));
-            m.subMeshCount = subs.Count;
-            for (int s = 0; s < subs.Count; s++) m.SetTriangles(new Il2CppStructArray<int>(subs[s]), s);
-            m.RecalculateBounds();
-            return m;
+            var mesh = new Mesh { name = meshRenderer.name + "_Moved" };
+            if (v.Count > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            mesh.SetVertices(new Il2CppStructArray<Vector3>(v.ToArray()));
+            if (hasN) mesh.SetNormals(new Il2CppStructArray<Vector3>(n.ToArray()));
+            if (hasT) mesh.SetTangents(new Il2CppStructArray<Vector4>(tg.ToArray()));
+            if (hasU) mesh.SetUVs(0, new Il2CppStructArray<Vector2>(uv.ToArray()));
+            mesh.subMeshCount = subs.Count;
+            for (int s = 0; s < subs.Count; s++) mesh.SetTriangles(new Il2CppStructArray<int>(subs[s]), s);
+            mesh.RecalculateBounds();
+            return mesh;
         }
 
         /// The original mesh, if the game still has it loaded: same name as the object, same size and place.
-        static Mesh ByName(MeshRenderer r)
+        static Mesh ByName(MeshRenderer meshRenderer)
         {
-            var want = r.bounds;
-            foreach (var m in Resources.FindObjectsOfTypeAll<Mesh>())
+            var want = meshRenderer.bounds;
+            foreach (var mesh in Resources.FindObjectsOfTypeAll<Mesh>())
             {
-                if (m == null || m.name != r.gameObject.name || m.vertexCount == 0) continue;
+                if (mesh == null || mesh.name != meshRenderer.gameObject.name || mesh.vertexCount == 0) continue;
                 // the mesh's box, placed like the object, must cover the renderer's box
-                var b = m.bounds;
-                var w = new Bounds(r.transform.TransformPoint(b.center), Vector3.zero);
-                for (int i = 0; i < 8; i++)
+                var otherBounds = mesh.bounds;
+                var w = new Bounds(meshRenderer.transform.TransformPoint(otherBounds.center), Vector3.zero);
+                for (int index = 0; index < 8; index++)
                 {
-                    var c = b.center + Vector3.Scale(b.extents, new Vector3((i & 1) == 0 ? -1 : 1, (i & 2) == 0 ? -1 : 1, (i & 4) == 0 ? -1 : 1));
-                    w.Encapsulate(r.transform.TransformPoint(c));
+                    var c = otherBounds.center + Vector3.Scale(otherBounds.extents, new Vector3((index & 1) == 0 ? -1 : 1, (index & 2) == 0 ? -1 : 1, (index & 4) == 0 ? -1 : 1));
+                    w.Encapsulate(meshRenderer.transform.TransformPoint(c));
                 }
-                if ((w.center - want.center).magnitude < 0.3f && (w.size - want.size).magnitude < 0.1f * want.size.magnitude + 0.2f) return m;
+                if ((w.center - want.center).magnitude < 0.3f && (w.size - want.size).magnitude < 0.1f * want.size.magnitude + 0.2f) return mesh;
             }
             return null;
         }

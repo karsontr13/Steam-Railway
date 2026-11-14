@@ -43,13 +43,13 @@ namespace SteamRailway
             }
         }
 
-        static void Leave(EditorMode m)
+        static void Leave(EditorMode mode)
         {
             try
             {
-                if (m == EditorMode.Objects) ObjectEditor.Leave();
-                if (m == EditorMode.Track) TrackEditor.Leave();
-                if (m == EditorMode.Terrain) TerrainEditor.Leave();
+                if (mode == EditorMode.Objects) ObjectEditor.Leave();
+                if (mode == EditorMode.Track) TrackEditor.Leave();
+                if (mode == EditorMode.Terrain) TerrainEditor.Leave();
             }
             catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Leaving the editor: {e.Message}"); }
         }
@@ -82,15 +82,15 @@ namespace SteamRailway
         public static void Panel(string head, string info, string warn, string keys)
         {
             Styles();
-            float w = Screen.width;
-            GUI.Label(new Rect(w * 0.5f - 12f, Screen.height * 0.5f - 14f, 24f, 28f), "+", s_Big);
-            GUI.Label(new Rect(0f, 30f, w, 28f), head + "  " + info, s_Big);
-            if (!string.IsNullOrEmpty(warn)) GUI.Label(new Rect(0f, 58f, w, 24f), warn, s_Warn);
+            float weight = Screen.width;
+            GUI.Label(new Rect(weight * 0.5f - 12f, Screen.height * 0.5f - 14f, 24f, 28f), "+", s_Big);
+            GUI.Label(new Rect(0f, 30f, weight, 28f), head + "  " + info, s_Big);
+            if (!string.IsNullOrEmpty(warn)) GUI.Label(new Rect(0f, 58f, weight, 24f), warn, s_Warn);
             if (!string.IsNullOrEmpty(keys))
             {
                 var lines = keys.Split('\n');
-                for (int i = 0; i < lines.Length; i++)
-                    GUI.Label(new Rect(0f, Screen.height - 60f - (lines.Length - 1 - i) * 20f, w, 22f), lines[i], s_Small);
+                for (int index = 0; index < lines.Length; index++)
+                    GUI.Label(new Rect(0f, Screen.height - 60f - (lines.Length - 1 - index) * 20f, weight, 22f), lines[index], s_Small);
             }
         }
 
@@ -100,20 +100,20 @@ namespace SteamRailway
         static Material LineMaterial()
         {
             if (s_LineMat != null) return s_LineMat;
-            Shader sh = null;
-            foreach (var n in new[] { "Hidden/Internal-Colored", "Sprites/Default", "Unlit/Color", "Legacy Shaders/Particles/Alpha Blended Premultiply" })
+            Shader shader = null;
+            foreach (var name in new[] { "Hidden/Internal-Colored", "Sprites/Default", "Unlit/Color", "Legacy Shaders/Particles/Alpha Blended Premultiply" })
             {
-                sh = Shader.Find(n);
-                if (sh != null) break;
+                shader = Shader.Find(name);
+                if (shader != null) break;
             }
-            if (sh != null)
+            if (shader != null)
             {
-                s_LineMat = new Material(sh);
+                s_LineMat = new Material(shader);
                 try { s_LineMat.SetInt("_ZWrite", 0); } catch { }
             }
             else
             {
-                foreach (var m in Resources.FindObjectsOfTypeAll<Material>()) if (m.name == "GLB_Green_A05") { s_LineMat = new Material(m); break; }
+                foreach (var material in Resources.FindObjectsOfTypeAll<Material>()) if (material.name == "GLB_Green_A05") { s_LineMat = new Material(material); break; }
             }
             if (s_LineMat != null) s_LineMat.hideFlags = HideFlags.DontUnloadUnusedAsset;
             return s_LineMat;
@@ -151,10 +151,10 @@ namespace SteamRailway
                 Make();
                 m_Go.SetActive(true);
                 m_Lr.loop = loop;
-                var arr = new Vector3[pts.Count];
-                for (int i = 0; i < arr.Length; i++) arr[i] = pts[i];
-                m_Lr.positionCount = arr.Length;
-                m_Lr.SetPositions(new Il2CppStructArray<Vector3>(arr));
+                var pointArray = new Vector3[pts.Count];
+                for (int index = 0; index < pointArray.Length; index++) pointArray[index] = pts[index];
+                m_Lr.positionCount = pointArray.Length;
+                m_Lr.SetPositions(new Il2CppStructArray<Vector3>(pointArray));
                 m_Lr.startColor = c; m_Lr.endColor = c;
                 if (m_Mat != null) m_Mat.color = c;
             }
@@ -166,46 +166,46 @@ namespace SteamRailway
         }
 
         /// A ring on the ground (brush, snap marker).
-        public static List<Vector3> Ring(Vector3 c, float r, int n = 40, float lift = 0.15f)
+        public static List<Vector3> Ring(Vector3 center, float radius, int count = 40, float lift = 0.15f)
         {
-            var pts = new List<Vector3>(n);
-            for (int i = 0; i < n; i++)
+            var points = new List<Vector3>(count);
+            for (int index = 0; index < count; index++)
             {
-                float a = i * Mathf.PI * 2f / n;
-                var p = c + new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
-                p.y = H.TerrainHeight(p, c.y) + lift;
-                pts.Add(p);
+                float firstValue = index * Mathf.PI * 2f / count;
+                var point = center + new Vector3(Mathf.Cos(firstValue) * radius, 0f, Mathf.Sin(firstValue) * radius);
+                point.y = H.TerrainHeight(point, center.y) + lift;
+                points.Add(point);
             }
-            return pts;
+            return points;
         }
 
         public static Transform Camera()
         {
-            var cam = GameManager.GetVpFPSCamera();
-            return cam != null ? cam.transform : null;
+            var firstPersonCamera = GameManager.GetVpFPSCamera();
+            return firstPersonCamera != null ? firstPersonCamera.transform : null;
         }
 
         /// Where the crosshair meets the ground or an object (the player, our editor lines and trains ignored).
         public static bool Aim(out Vector3 point, float reach = 400f)
         {
             point = Vector3.zero;
-            var cam = Camera();
-            if (cam == null) return false;
-            var hits = Physics.RaycastAll(cam.position, cam.forward, reach, ~0, QueryTriggerInteraction.Ignore);
+            var cameraTransform = Camera();
+            if (cameraTransform == null) return false;
+            var hits = Physics.RaycastAll(cameraTransform.position, cameraTransform.forward, reach, ~0, QueryTriggerInteraction.Ignore);
             float best = float.MaxValue;
             bool any = false;
-            foreach (var h in hits)
+            foreach (var hit in hits)
             {
-                if (h.distance >= best || IsOurs(h.collider.transform)) continue;
-                best = h.distance; point = h.point; any = true;
+                if (hit.distance >= best || IsOurs(hit.collider.transform)) continue;
+                best = hit.distance; point = hit.point; any = true;
             }
             return any;
         }
 
-        static bool IsOurs(Transform t)
+        static bool IsOurs(Transform transform)
         {
-            for (var x = t; x != null; x = x.parent)
-                if (x.name.StartsWith("CHARACTER_FPSPlayer") || x.name.StartsWith("SR_") || x.name.StartsWith(TrainBuilder.NamePrefix)) return true;
+            for (var node = transform; node != null; node = node.parent)
+                if (node.name.StartsWith("CHARACTER_FPSPlayer") || node.name.StartsWith("SR_") || node.name.StartsWith(TrainBuilder.NamePrefix)) return true;
             return false;
         }
 

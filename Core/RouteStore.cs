@@ -12,8 +12,8 @@ namespace SteamRailway
         public string Id { get; set; } = "route";
         public List<float[]> Points { get; set; } = new List<float[]>();
 
-        public Vector3 GetPoint(int i) => new Vector3(Points[i][0], Points[i][1], Points[i][2]);
-        public void AddPoint(Vector3 p) => Points.Add(new[] { p.x, p.y, p.z });
+        public Vector3 GetPoint(int index) => new Vector3(Points[index][0], Points[index][1], Points[index][2]);
+        public void AddPoint(Vector3 point) => Points.Add(new[] { point.x, point.y, point.z });
     }
 
     internal sealed class RouteFile

@@ -32,7 +32,7 @@ namespace SteamRailway
         static string FilePath(string scene) => Path.Combine(RouteStore.FolderPath, "Custom", scene + ".json");
 
         public static Vector3 V(float[] a) => a != null && a.Length >= 3 ? new Vector3(a[0], a[1], a[2]) : Vector3.zero;
-        public static float[] F(Vector3 v) => new[] { (float)System.Math.Round(v.x, 3), (float)System.Math.Round(v.y, 3), (float)System.Math.Round(v.z, 3) };
+        public static float[] F(Vector3 vector) => new[] { (float)System.Math.Round(vector.x, 3), (float)System.Math.Round(vector.y, 3), (float)System.Math.Round(vector.z, 3) };
 
         public static CustomLineFile For(string scene)
         {
@@ -72,32 +72,32 @@ namespace SteamRailway
 
         public static string NextId(string scene)
         {
-            var f = For(scene);
-            for (int i = 1; ; i++)
+            var customLineFile = For(scene);
+            for (int index = 1; ; index++)
             {
-                string id = $"{scene}_drawn{i}";
-                if (!f.Lines.Exists(x => x.Id == id)) return id;
+                string identifier = $"{scene}_drawn{index}";
+                if (!customLineFile.Lines.Exists(customLine => customLine.Id == identifier)) return identifier;
             }
         }
 
-        public static void Add(string scene, CustomLineData d) { For(scene).Lines.Add(d); Save(); }
+        public static void Add(string scene, CustomLineData customLine) { For(scene).Lines.Add(customLine); Save(); }
 
-        public static bool Remove(string scene, string id)
+        public static bool Remove(string scene, string identifier)
         {
-            int n = For(scene).Lines.RemoveAll(x => x.Id == id);
-            if (n > 0) Save();
-            return n > 0;
+            int count = For(scene).Lines.RemoveAll(customLine => customLine.Id == identifier);
+            if (count > 0) Save();
+            return count > 0;
         }
 
         /// The drawn line nearest to p (horizontally, within maxDist), or null.
-        public static CustomLineData Nearest(string scene, Vector3 p, float maxDist)
+        public static CustomLineData Nearest(string scene, Vector3 point, float maxDist)
         {
-            CustomLineData best = null; float bd = maxDist * maxDist;
-            foreach (var l in For(scene).Lines)
-                foreach (var q in l.Points)
+            CustomLineData best = null; float bestDistance = maxDist * maxDist;
+            foreach (var customLine in For(scene).Lines)
+                foreach (var q in customLine.Points)
                 {
-                    float dx = q[0] - p.x, dz = q[2] - p.z, d = dx * dx + dz * dz;
-                    if (d < bd) { bd = d; best = l; }
+                    float deltaX = q[0] - point.x, deltaZ = q[2] - point.z, distance = deltaX * deltaX + deltaZ * deltaZ;
+                    if (distance < bestDistance) { bestDistance = distance; best = customLine; }
                 }
             return best;
         }
@@ -107,43 +107,43 @@ namespace SteamRailway
         /// Adds the region's drawn lines to its lines.
         public static void AddDefs(string scene, List<TrackDef> defs)
         {
-            foreach (var l in For(scene).Lines)
+            foreach (var customLine in For(scene).Lines)
             {
-                if (l.Points == null || l.Points.Count < 2) continue;
-                var pts = new List<Vector3>();
-                foreach (var p in l.Points) pts.Add(V(p));
-                defs.Add(new TrackDef { Id = l.Id, Points = pts, HasCustom = true });
+                if (customLine.Points == null || customLine.Points.Count < 2) continue;
+                var points = new List<Vector3>();
+                foreach (var p in customLine.Points) points.Add(V(p));
+                defs.Add(new TrackDef { Id = customLine.Id, Points = points, HasCustom = true });
             }
         }
 
         public static List<Vector3> SwitchPoints(string scene)
         {
-            var res = new List<Vector3>();
-            foreach (var l in For(scene).Lines) if (l.Switches != null) foreach (var p in l.Switches) res.Add(V(p));
-            return res;
+            var results = new List<Vector3>();
+            foreach (var customLine in For(scene).Lines) if (customLine.Switches != null) foreach (var p in customLine.Switches) results.Add(V(p));
+            return results;
         }
 
         public static List<CurvePath> FillPaths(string scene)
         {
-            var res = new List<CurvePath>();
-            foreach (var l in For(scene).Lines)
+            var results = new List<CurvePath>();
+            foreach (var customLine in For(scene).Lines)
             {
-                if (!l.Fill || l.Points == null || l.Points.Count < 2) continue;
-                var pts = new List<Vector3>();
-                foreach (var p in l.Points) pts.Add(V(p));
-                res.Add(CurvePath.CatmullRom(pts));
+                if (!customLine.Fill || customLine.Points == null || customLine.Points.Count < 2) continue;
+                var points = new List<Vector3>();
+                foreach (var p in customLine.Points) points.Add(V(p));
+                results.Add(CurvePath.CatmullRom(points));
             }
-            return res;
+            return results;
         }
 
-        static Vector3 End(TrackDef d, int e) => e == 0 ? d.Points[0] : d.Points[d.Points.Count - 1];
+        static Vector3 End(TrackDef trackDef, int endIndex) => endIndex == 0 ? trackDef.Points[0] : trackDef.Points[trackDef.Points.Count - 1];
 
-        static Vector3 Out(TrackDef d, int e)
+        static Vector3 Out(TrackDef trackDef, int endIndex)
         {
-            var p = d.Points;
-            var v = e == 0 ? p[0] - p[1] : p[p.Count - 1] - p[p.Count - 2];
-            v.y = 0f;
-            return v.normalized;
+            var points = trackDef.Points;
+            var vector = endIndex == 0 ? points[0] - points[1] : points[points.Count - 1] - points[points.Count - 2];
+            vector.y = 0f;
+            return vector.normalized;
         }
 
         /// Lines meeting end to end, heading on (at least one of them drawn), become one line.
@@ -152,21 +152,21 @@ namespace SteamRailway
             for (int guard = 0; guard < 100; guard++)
             {
                 bool merged = false;
-                for (int i = 0; i < defs.Count && !merged; i++)
-                for (int j = 0; j < defs.Count && !merged; j++)
+                for (int index = 0; index < defs.Count && !merged; index++)
+                for (int innerIndex = 0; innerIndex < defs.Count && !merged; innerIndex++)
                 {
-                    if (i == j || (!defs[i].HasCustom && !defs[j].HasCustom)) continue;
-                    if (defs[i].Points.Count < 2 || defs[j].Points.Count < 2) continue;
+                    if (index == innerIndex || (!defs[index].HasCustom && !defs[innerIndex].HasCustom)) continue;
+                    if (defs[index].Points.Count < 2 || defs[innerIndex].Points.Count < 2) continue;
                     for (int ea = 0; ea < 2 && !merged; ea++)
                     for (int eb = 0; eb < 2 && !merged; eb++)
                     {
-                        if ((End(defs[i], ea) - End(defs[j], eb)).sqrMagnitude > 0.6f * 0.6f) continue;
-                        if (Vector3.Dot(Out(defs[i], ea), Out(defs[j], eb)) > -0.7f) continue;
-                        var m = Join(defs[i], ea, defs[j], eb);
-                        SteamRailwayMod.Debug($"Lines {defs[i].Id} and {defs[j].Id} joined end to end as {m.Id}.");
-                        int hi = Mathf.Max(i, j), lo = Mathf.Min(i, j);
-                        defs.RemoveAt(hi);
-                        defs[lo] = m;
+                        if ((End(defs[index], ea) - End(defs[innerIndex], eb)).sqrMagnitude > 0.6f * 0.6f) continue;
+                        if (Vector3.Dot(Out(defs[index], ea), Out(defs[innerIndex], eb)) > -0.7f) continue;
+                        var trackDef = Join(defs[index], ea, defs[innerIndex], eb);
+                        SteamRailwayMod.Debug($"Lines {defs[index].Id} and {defs[innerIndex].Id} joined end to end as {trackDef.Id}.");
+                        int upper = Mathf.Max(index, innerIndex), lower = Mathf.Min(index, innerIndex);
+                        defs.RemoveAt(upper);
+                        defs[lower] = trackDef;
                         merged = true;
                     }
                 }
@@ -174,22 +174,22 @@ namespace SteamRailway
             }
         }
 
-        static TrackDef Join(TrackDef a, int ea, TrackDef b, int eb)
+        static TrackDef Join(TrackDef firstTrackDef, int ea, TrackDef secondTrackDef, int eb)
         {
-            var pa = new List<Vector3>(a.Points);
-            if (ea == 0) pa.Reverse();                 // a's joining end last
-            var pb = new List<Vector3>(b.Points);
-            if (eb == 1) pb.Reverse();                 // b's joining end first
-            for (int k = 1; k < pb.Count; k++) pa.Add(pb[k]);
+            var firstPoints = new List<Vector3>(firstTrackDef.Points);
+            if (ea == 0) firstPoints.Reverse();                 // a's joining end last
+            var secondPoints = new List<Vector3>(secondTrackDef.Points);
+            if (eb == 1) secondPoints.Reverse();                 // b's joining end first
+            for (int deepIndex = 1; deepIndex < secondPoints.Count; deepIndex++) firstPoints.Add(secondPoints[deepIndex]);
             var keep = new List<KeyValuePair<Vector3, Vector3>>();
-            if (a.Keep != null) keep.AddRange(a.Keep);
-            if (b.Keep != null) keep.AddRange(b.Keep);
+            if (firstTrackDef.Keep != null) keep.AddRange(firstTrackDef.Keep);
+            if (secondTrackDef.Keep != null) keep.AddRange(secondTrackDef.Keep);
             // the region's own line keeps its name (trains and switches refer to it)
-            string id = a.HasCustom && !b.HasCustom ? b.Id : a.Id;
-            var m = new TrackDef { Id = id, Points = pa, Keep = keep.Count > 0 ? keep : null, HasCustom = true };
-            m.Originals.AddRange(a.Originals);
-            m.Originals.AddRange(b.Originals);
-            return m;
+            string identifier = firstTrackDef.HasCustom && !secondTrackDef.HasCustom ? secondTrackDef.Id : firstTrackDef.Id;
+            var trackDef = new TrackDef { Id = identifier, Points = firstPoints, Keep = keep.Count > 0 ? keep : null, HasCustom = true };
+            trackDef.Originals.AddRange(firstTrackDef.Originals);
+            trackDef.Originals.AddRange(secondTrackDef.Originals);
+            return trackDef;
         }
     }
 }

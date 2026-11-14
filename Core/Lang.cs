@@ -19,6 +19,6 @@ namespace SteamRailway
             }
         }
 
-        public static string T(string tr, string en) => Turkish ? tr : en;
+        public static string T(string turkishText, string englishText) => Turkish ? turkishText : englishText;
     }
 }

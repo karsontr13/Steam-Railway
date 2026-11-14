@@ -4,6 +4,7 @@
     <AssemblyName>SteamRailway</AssemblyName>
     <RootNamespace>SteamRailway</RootNamespace>
     <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ImplicitUsings>disable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
@@ -16,7 +17,7 @@
 
   <ItemGroup>
     <!-- Helper projects (Tools\NoDLCTest) and the Unity editor script (Unity\Editor) are built elsewhere. -->
-    <Compile Remove="Tools\**;Unity\**;Blender\**" />
+    <Compile Remove="Tools\**;Unity\**;Blender\**;Assets\**" />
     <None Remove="Tools\**;Unity\**;Blender\**" />
   </ItemGroup>
 
@@ -27,6 +28,12 @@
     <Reference Include="$(TLD)\MelonLoader\net6\Il2CppInterop.Common.dll" Private="false" />
     <Reference Include="$(TLD)\MelonLoader\Il2CppAssemblies\*.dll" Private="false" />
     <Reference Include="$(TLD)\Mods\ModData.dll" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\steamrailway.bundle" LogicalName="steamrailway.bundle" />
+    <EmbeddedResource Include="Assets\SOUND_CREDITS.txt" LogicalName="SOUND_CREDITS.txt" />
+    <EmbeddedResource Include="Assets\Data\**\*" LogicalName="Data/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <Target Name="CopyToGameMods" AfterTargets="Build" Condition="'$(CopyToMods)' == 'true'">

@@ -23,23 +23,23 @@ namespace SteamRailway
 
         /// The spline and the sampled path. Rails are laid later (LayRails), once the junctions are known.
         /// keep: stretches (pairs of points on the line) where an original piece with a structure stays.
-        public static BuiltTrack Build(string id, IList<Vector3> points, IList<KeyValuePair<Vector3, Vector3>> keep)
+        public static BuiltTrack Build(string identifier, IList<Vector3> points, IList<KeyValuePair<Vector3, Vector3>> keep)
         {
             if (points == null || points.Count < 2) return null;
 
-            var root = new GameObject("SteamRailway_Track_" + id);
+            var root = new GameObject("SteamRailway_Track_" + identifier);
             var spline = CreateSpline(root.transform, points);
             var path = CurvePath.CatmullRom(points);
             var rails = new GameObject("Rails").transform;
             rails.SetParent(root.transform, false);
 
-            var built = new BuiltTrack { Id = id, Root = root, Spline = spline, Path = path, Rails = rails };
+            var built = new BuiltTrack { Id = identifier, Root = root, Spline = spline, Path = path, Rails = rails };
             if (keep != null)
-                foreach (var k in keep)
+                foreach (var pair in keep)
                 {
-                    float a = path.NearestDistance(k.Key, out _), b = path.NearestDistance(k.Value, out _);
-                    if (b < a) (a, b) = (b, a);
-                    built.Skip.Add(new Vector2(a, b));
+                    float firstValue = path.NearestDistance(pair.Key, out _), secondValue = path.NearestDistance(pair.Value, out _);
+                    if (secondValue < firstValue) (firstValue, secondValue) = (secondValue, firstValue);
+                    built.Skip.Add(new Vector2(firstValue, secondValue));
                 }
             built.Skip.Sort((x, y) => x.x.CompareTo(y.x));
             return built;
@@ -49,18 +49,18 @@ namespace SteamRailway
         /// line). Plain child objects with a segment component, read in one sync, take milliseconds.
         static CurvySpline CreateSpline(Transform parent, IList<Vector3> points)
         {
-            var go = new GameObject("Spline");
-            go.transform.SetParent(parent, false);
-            var spline = go.AddComponent<CurvySpline>();
-            go.SetActive(false);
-            for (int i = 0; i < points.Count; i++)
+            var targetObject = new GameObject("Spline");
+            targetObject.transform.SetParent(parent, false);
+            var spline = targetObject.AddComponent<CurvySpline>();
+            targetObject.SetActive(false);
+            for (int index = 0; index < points.Count; index++)
             {
-                var cp = new GameObject("CP" + i.ToString("D4"));
-                cp.transform.SetParent(go.transform, false);
-                cp.transform.position = points[i];
-                cp.AddComponent<CurvySplineSegment>();
+                var copyObject = new GameObject("CP" + index.ToString("D4"));
+                copyObject.transform.SetParent(targetObject.transform, false);
+                copyObject.transform.position = points[index];
+                copyObject.AddComponent<CurvySplineSegment>();
             }
-            go.SetActive(true);
+            targetObject.SetActive(true);
             spline.Interpolation = CurvyInterpolation.CatmullRom;
             // up = world up (control points are unrotated); Dynamic twists over a long 3D line and rolls the train
             spline.Orientation = CurvyOrientation.Static;
@@ -72,44 +72,44 @@ namespace SteamRailway
         /// Lays the rail along the whole line except the kept original pieces. Turnouts change what is laid near
         /// a junction (see Switches): the branch gets rails without sleepers under the points, the main line long
         /// sleepers that carry both tracks.
-        public static void LayRails(BuiltTrack t)
+        public static void LayRails(BuiltTrack track)
         {
-            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var plain = new List<Vector2>();
             float from = 0f;
-            foreach (var k in t.Skip)
+            foreach (var k in track.Skip)
             {
                 if (k.x > from + 0.4f) plain.Add(new Vector2(from, k.x));
                 from = Mathf.Max(from, k.y);
             }
-            if (t.Path.Length > from + 0.4f) plain.Add(new Vector2(from, t.Path.Length));
+            if (track.Path.Length > from + 0.4f) plain.Add(new Vector2(from, track.Path.Length));
 
             // one go along the whole line (the sleepers keep one rhythm through the points); the turnouts change
             // what is laid where through functions of the position
-            var combined = Switches.Combined(t);
+            var combined = Switches.Combined(track);
             foreach (var r in plain)
             {
-                RailPieces.Lay(t.Rails, t.Path, r.x, r.y, combined);
-                t.Laid.Add(r);
+                RailPieces.Lay(track.Rails, track.Path, r.x, r.y, combined);
+                track.Laid.Add(r);
             }
             // the branch's rails at the points (one of them the moving blade)
-            var blades = Switches.Blades(t);
-            foreach (var bl in blades)
-                foreach (var o in bl.Options) RailPieces.Lay(t.Rails, t.Path, bl.From, bl.To, o);
-            SteamRailwayMod.Debug($"Track '{t.Id}': spline {t.Spline.Length:F0} m, path {t.Path.Length:F0} m, {t.Laid.Count} stretch(es) of new rail, {blades.Count} set(s) of points, {sw.ElapsedMilliseconds} ms.");
+            var blades = Switches.Blades(track);
+            foreach (var turnoutRange in blades)
+                foreach (var options in turnoutRange.Options) RailPieces.Lay(track.Rails, track.Path, turnoutRange.From, turnoutRange.To, options);
+            SteamRailwayMod.Debug($"Track '{track.Id}': spline {track.Spline.Length:F0} m, path {track.Path.Length:F0} m, {track.Laid.Count} stretch(es) of new rail, {blades.Count} set(s) of points, {stopwatch.ElapsedMilliseconds} ms.");
         }
 
-        static void LayPlain(BuiltTrack t, float a, float b)
+        static void LayPlain(BuiltTrack track, float firstValue, float secondValue)
         {
-            RailPieces.Lay(t.Rails, t.Path, a, b, null);
-            t.Laid.Add(new Vector2(a, b));
+            RailPieces.Lay(track.Rails, track.Path, firstValue, secondValue, null);
+            track.Laid.Add(new Vector2(firstValue, secondValue));
         }
 
         /// Snaps a point to the terrain surface (used by the route editor).
-        public static Vector3 SnapToTerrain(Vector3 p)
+        public static Vector3 SnapToTerrain(Vector3 point)
         {
-            p.y = H.TerrainHeight(p, p.y) + TrackHeightAboveTerrain;
-            return p;
+            point.y = H.TerrainHeight(point, point.y) + TrackHeightAboveTerrain;
+            return point;
         }
     }
 }

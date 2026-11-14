@@ -18,23 +18,23 @@ namespace SteamRailway
         static float s_FlashStart = -100f;
         static Vector3 s_BlastPos;
 
-        public static void Play(SteamSim sim)
+        public static void Play(SteamSim simulation)
         {
-            var train = sim.Train;
+            var train = simulation.Train;
             Blast(train);
             TrainSounds.Explosion(train);
 
             var player = GameManager.GetPlayerObject();
             if (player == null) return;
 
-            float d = Vector3.Distance(player.transform.position, train.transform.position);
-            if (d > HearRadius)
+            float distance = Vector3.Distance(player.transform.position, train.transform.position);
+            if (distance > HearRadius)
             {
                 CabControls.Message(L.T("Uzaktan büyük bir patlama sesi geldi: lokomotifin kazanı patladı.",
                                         "A loud bang in the distance: the locomotive's boiler has exploded."));
                 return;
             }
-            if (d <= BurnsRadius)
+            if (distance <= BurnsRadius)
             {
                 var burns = GameManager.GetBurnsComponent();
                 if (burns != null && !burns.HasBurns())
@@ -55,68 +55,68 @@ namespace SteamRailway
             var prefab = LocomotiveModel.BlastPrefab();
             if (prefab != null)
             {
-                var go = Object.Instantiate(prefab);
-                go.name = "BoilerBlast";
-                go.transform.position = pos;
-                go.transform.rotation = train.transform.rotation;
+                var targetObject = Object.Instantiate(prefab);
+                targetObject.name = "BoilerBlast";
+                targetObject.transform.position = pos;
+                targetObject.transform.rotation = train.transform.rotation;
                 var blend = LocoSmoke.FindBlendShader();
                 var add = Shader.Find("Particles/Additive") ?? Shader.Find("Legacy Shaders/Particles/Additive");
-                foreach (var ps in go.GetComponentsInChildren<ParticleSystem>())
+                foreach (var particleSystem in targetObject.GetComponentsInChildren<ParticleSystem>())
                 {
-                    var r = ps.GetComponent<ParticleSystemRenderer>();
-                    bool fire = ps.name == "Fireball" || ps.name == "Sparks" || ps.name == "Flash" || ps.name == "Embers";
+                    var particleRenderer = particleSystem.GetComponent<ParticleSystemRenderer>();
+                    bool fire = particleSystem.name == "Fireball" || particleSystem.name == "Sparks" || particleSystem.name == "Flash" || particleSystem.name == "Embers";
                     var shader = fire ? add : blend;
                     if (shader != null)
                     {
-                        var mat = new Material(shader) { name = "SteamRailway_Blast_" + ps.name };
-                        mat.mainTexture = ps.name == "Sparks" || ps.name == "Embers" ? Texture2D.whiteTexture : r.sharedMaterial != null ? r.sharedMaterial.mainTexture : null;
-                        if (mat.HasProperty("_TintColor"))
-                            mat.SetColor("_TintColor", fire ? new Color(0.5f, 0.5f, 0.5f, 0.5f) : new Color(0.5f, 0.5f, 0.5f, 0.5f));
-                        r.sharedMaterial = mat;
+                        var material = new Material(shader) { name = "SteamRailway_Blast_" + particleSystem.name };
+                        material.mainTexture = particleSystem.name == "Sparks" || particleSystem.name == "Embers" ? Texture2D.whiteTexture : particleRenderer.sharedMaterial != null ? particleRenderer.sharedMaterial.mainTexture : null;
+                        if (material.HasProperty("_TintColor"))
+                            material.SetColor("_TintColor", fire ? new Color(0.5f, 0.5f, 0.5f, 0.5f) : new Color(0.5f, 0.5f, 0.5f, 0.5f));
+                        particleRenderer.sharedMaterial = material;
                     }
-                    ps.Play();
+                    particleSystem.Play();
                 }
-                Object.Destroy(go, 30f);
+                Object.Destroy(targetObject, 30f);
             }
             else SteamBurst(train);
 
             // a flash of light that dies out
-            var lg = new GameObject("BoilerBlastLight");
-            lg.transform.position = pos + Vector3.up * 0.5f;
-            s_Flash = lg.AddComponent<Light>();
+            var lampObject = new GameObject("BoilerBlastLight");
+            lampObject.transform.position = pos + Vector3.up * 0.5f;
+            s_Flash = lampObject.AddComponent<Light>();
             s_Flash.type = LightType.Point;
             s_Flash.color = new Color(1f, 0.62f, 0.28f);
             s_Flash.range = 40f;
             s_Flash.intensity = 8f;
             s_Flash.shadows = LightShadows.None;
             s_FlashStart = Time.time;
-            Object.Destroy(lg, FlashTime + 0.5f);
+            Object.Destroy(lampObject, FlashTime + 0.5f);
         }
 
         /// the flash fades.
         public static void Update()
         {
-            float t = Time.time - s_FlashStart;
-            if (t < 0f || t > FlashTime) return;
+            float fraction = Time.time - s_FlashStart;
+            if (fraction < 0f || fraction > FlashTime) return;
             if (s_Flash != null)
             {
-                float k = Mathf.Clamp01(1f - t / FlashTime);
-                s_Flash.intensity = 8f * k * k * (0.85f + 0.15f * Mathf.Sin(t * 60f));
+                float scale = Mathf.Clamp01(1f - fraction / FlashTime);
+                s_Flash.intensity = 8f * scale * scale * (0.85f + 0.15f * Mathf.Sin(fraction * 60f));
             }
         }
 
         /// the whistle's dense steam emitter, enlarged for a moment.
         static void SteamBurst(SteamTrain train)
         {
-            var ps = train.m_SteamWhistleDenseParticleSystem;
-            if (ps == null) return;
-            var main = ps.main;
+            var particleSystem = train.m_SteamWhistleDenseParticleSystem;
+            if (particleSystem == null) return;
+            var main = particleSystem.main;
             main.startSize = new ParticleSystem.MinMaxCurve(6f);
             main.startSpeed = new ParticleSystem.MinMaxCurve(10f);
             main.startLifetime = new ParticleSystem.MinMaxCurve(4f);
             main.maxParticles = 600;
-            var shape = ps.shape; shape.angle = 70f; shape.radius = 1.5f;
-            ps.Emit(400);
+            var shape = particleSystem.shape; shape.angle = 70f; shape.radius = 1.5f;
+            particleSystem.Emit(400);
         }
     }
 }

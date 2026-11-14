@@ -65,107 +65,117 @@ namespace SteamRailway
         public static void ApplyScene(string scene)
         {
             if (s_AppliedScene == scene) return;
-            s_AppliedScene = scene;
-            var f = For(scene);
-            if (f.Strokes.Count == 0) return;
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            int dabs = 0;
-            foreach (var st in f.Strokes) dabs += st.Dabs != null ? st.Dabs.Count : 0;
-            // every terrain is read once, all the dabs are applied in memory, and it is written once
-            foreach (var terrain in Terrain.activeTerrains)
+            var strokeFile = For(scene);
+            if (strokeFile.Strokes.Count == 0)
             {
-                try { ReplayOn(terrain, f); }
-                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Terrain edits on {terrain.name}: {e.Message}"); }
+                s_AppliedScene = scene;
+                return;
             }
-            SteamRailwayMod.Log.Msg($"{scene}: {f.Strokes.Count} terrain stroke(s) ({dabs} dabs) applied in {sw.ElapsedMilliseconds} ms.");
+            var loadedTerrains = Terrain.activeTerrains;
+            if (loadedTerrains.Length == 0)
+            {
+                SteamRailwayMod.Log.Warning($"{scene}: no terrain is loaded yet, the {strokeFile.Strokes.Count} terrain stroke(s) are not applied.");
+                return;
+            }
+            s_AppliedScene = scene;
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            int dabCount = 0;
+            foreach (var stroke in strokeFile.Strokes) dabCount += stroke.Dabs != null ? stroke.Dabs.Count : 0;
+            int terrainsChanged = 0;
+            foreach (var terrain in loadedTerrains)
+            {
+                try { if (ReplayOn(terrain, strokeFile)) terrainsChanged++; }
+                catch (System.Exception exception) { SteamRailwayMod.Log.Warning($"Terrain edits on {terrain.name}: {exception}"); }
+            }
+            SteamRailwayMod.Log.Msg($"{scene}: {strokeFile.Strokes.Count} terrain stroke(s) ({dabCount} dabs) applied to {terrainsChanged} of {loadedTerrains.Length} terrain(s) in {stopwatch.ElapsedMilliseconds} ms.");
         }
 
-        static void ReplayOn(Terrain terrain, TerrainEditFile f)
+        static bool ReplayOn(Terrain terrain, TerrainEditFile editFile)
         {
             var td = terrain.terrainData;
-            var tp = terrain.transform.position;
+            var targetPoint = terrain.transform.position;
             var size = td.size;
-            int res = td.heightmapResolution;
-            float cx = size.x / (res - 1), cz = size.z / (res - 1);
+            int resolution = td.heightmapResolution;
+            float centerX = size.x / (resolution - 1), centerZ = size.z / (resolution - 1);
             // the area all the dabs touch on this terrain
             float minX = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxZ = float.MinValue;
-            foreach (var st in f.Strokes)
-                if (st.Dabs != null)
-                    foreach (var d in st.Dabs)
+            foreach (var stroke in editFile.Strokes)
+                if (stroke.Dabs != null)
+                    foreach (var d in stroke.Dabs)
                     {
                         if (d == null || d.Length < 5) continue;
                         minX = Mathf.Min(minX, d[0] - d[2]); maxX = Mathf.Max(maxX, d[0] + d[2]);
                         minZ = Mathf.Min(minZ, d[1] - d[2]); maxZ = Mathf.Max(maxZ, d[1] + d[2]);
                     }
-            if (maxX < tp.x || minX > tp.x + size.x || maxZ < tp.z || minZ > tp.z + size.z) return;
-            int x0 = Mathf.Clamp(Mathf.FloorToInt((minX - tp.x) / cx) - 1, 0, res - 1);
-            int x1 = Mathf.Clamp(Mathf.CeilToInt((maxX - tp.x) / cx) + 1, 0, res - 1);
-            int z0 = Mathf.Clamp(Mathf.FloorToInt((minZ - tp.z) / cz) - 1, 0, res - 1);
-            int z1 = Mathf.Clamp(Mathf.CeilToInt((maxZ - tp.z) / cz) + 1, 0, res - 1);
-            int w = x1 - x0 + 1, h = z1 - z0 + 1;
-            if (w <= 2 || h <= 2) return;
-            var obj = td.GetHeights(x0, z0, w, h);
-            var hs = new Il2CppStructArray<float>(obj.Pointer);
-            if (hs.Length < w * h) return;
-            var a = new float[w * h];
-            for (int i = 0; i < a.Length; i++) a[i] = hs[i];
+            if (maxX < targetPoint.x || minX > targetPoint.x + size.x || maxZ < targetPoint.z || minZ > targetPoint.z + size.z) return false;
+            int startX = Mathf.Clamp(Mathf.FloorToInt((minX - targetPoint.x) / centerX) - 1, 0, resolution - 1);
+            int endX = Mathf.Clamp(Mathf.CeilToInt((maxX - targetPoint.x) / centerX) + 1, 0, resolution - 1);
+            int startZ = Mathf.Clamp(Mathf.FloorToInt((minZ - targetPoint.z) / centerZ) - 1, 0, resolution - 1);
+            int endZ = Mathf.Clamp(Mathf.CeilToInt((maxZ - targetPoint.z) / centerZ) + 1, 0, resolution - 1);
+            int width = endX - startX + 1, height = endZ - startZ + 1;
+            if (width <= 2 || height <= 2) return false;
+            var heights = HeightmapAccess.Read(td, startX, startZ, width, height);
+            if (heights.Length < width * height) return false;
+            var a = new float[width * height];
+            for (int index = 0; index < a.Length; index++) a[index] = heights[index];
             bool changed = false;
-            foreach (var st in f.Strokes)
-                if (st.Dabs != null)
-                    foreach (var d in st.Dabs)
+            foreach (var stroke in editFile.Strokes)
+                if (stroke.Dabs != null)
+                    foreach (var d in stroke.Dabs)
                         if (d != null && d.Length >= 5)
-                            changed |= DabArray(a, w, h, x0, z0, tp, size, cx, cz, (BrushMode)st.Mode, d[0], d[1], d[2], d[3], d[4]);
-            if (!changed) return;
-            for (int i = 0; i < a.Length; i++) hs[i] = a[i];
-            td.SetHeights(x0, z0, obj);
+                            changed |= DabArray(a, width, height, startX, startZ, targetPoint, size, centerX, centerZ, (BrushMode)stroke.Mode, d[0], d[1], d[2], d[3], d[4]);
+            if (!changed) return false;
+            for (int index = 0; index < a.Length; index++) heights[index] = a[index];
+            HeightmapAccess.Write(td, startX, startZ, heights);
+            return true;
         }
 
         /// One dab on heights held in memory (a w x h block starting at heightmap x0, z0).
-        static bool DabArray(float[] a, int w, int h, int x0, int z0, Vector3 tp, Vector3 size, float cx, float cz,
+        static bool DabArray(float[] a, int width, int height, int startX, int startZ, Vector3 targetPoint, Vector3 size, float centerX, float centerZ,
                              BrushMode mode, float x, float z, float radius, float amount, float target)
         {
-            int ix0 = Mathf.Max(1, Mathf.FloorToInt((x - radius - tp.x) / cx) - x0);
-            int ix1 = Mathf.Min(w - 2, Mathf.CeilToInt((x + radius - tp.x) / cx) - x0);
-            int iz0 = Mathf.Max(1, Mathf.FloorToInt((z - radius - tp.z) / cz) - z0);
-            int iz1 = Mathf.Min(h - 2, Mathf.CeilToInt((z + radius - tp.z) / cz) - z0);
-            if (ix1 < ix0 || iz1 < iz0) return false;
-            float tgt = (target - tp.y) / size.y;
+            int firstColumn = Mathf.Max(1, Mathf.FloorToInt((x - radius - targetPoint.x) / centerX) - startX);
+            int lastColumn = Mathf.Min(width - 2, Mathf.CeilToInt((x + radius - targetPoint.x) / centerX) - startX);
+            int firstRow = Mathf.Max(1, Mathf.FloorToInt((z - radius - targetPoint.z) / centerZ) - startZ);
+            int lastRow = Mathf.Min(height - 2, Mathf.CeilToInt((z + radius - targetPoint.z) / centerZ) - startZ);
+            if (lastColumn < firstColumn || lastRow < firstRow) return false;
+            float tgt = (target - targetPoint.y) / size.y;
             bool changed = false;
-            for (int iz = iz0; iz <= iz1; iz++)
-            for (int ix = ix0; ix <= ix1; ix++)
+            for (int rowIndex = firstRow; rowIndex <= lastRow; rowIndex++)
+            for (int columnIndex = firstColumn; columnIndex <= lastColumn; columnIndex++)
             {
-                float wx = tp.x + (x0 + ix) * cx, wz = tp.z + (z0 + iz) * cz;
-                float d = Mathf.Sqrt((wx - x) * (wx - x) + (wz - z) * (wz - z));
-                if (d >= radius) continue;
-                float fall = Mathf.SmoothStep(1f, 0f, d / radius);
-                int idx = iz * w + ix;
-                float cur = a[idx], nv = cur;
+                float wx = targetPoint.x + (startX + columnIndex) * centerX, wz = targetPoint.z + (startZ + rowIndex) * centerZ;
+                float distance = Mathf.Sqrt((wx - x) * (wx - x) + (wz - z) * (wz - z));
+                if (distance >= radius) continue;
+                float fall = Mathf.SmoothStep(1f, 0f, distance / radius);
+                int index = rowIndex * width + columnIndex;
+                float current = a[index], nv = current;
                 switch (mode)
                 {
-                    case BrushMode.Raise: nv = cur + amount * fall / size.y; break;
-                    case BrushMode.Lower: nv = cur - amount * fall / size.y; break;
-                    case BrushMode.Flatten: nv = Mathf.Lerp(cur, tgt, Mathf.Clamp01(amount * fall)); break;
-                    case BrushMode.Fill: if (cur < tgt) nv = Mathf.Lerp(cur, tgt, Mathf.Clamp01(amount * fall)); break;
+                    case BrushMode.Raise: nv = current + amount * fall / size.y; break;
+                    case BrushMode.Lower: nv = current - amount * fall / size.y; break;
+                    case BrushMode.Flatten: nv = Mathf.Lerp(current, tgt, Mathf.Clamp01(amount * fall)); break;
+                    case BrushMode.Fill: if (current < tgt) nv = Mathf.Lerp(current, tgt, Mathf.Clamp01(amount * fall)); break;
                     case BrushMode.Smooth:
-                        float avg = (a[idx - 1] + a[idx + 1] + a[idx - w] + a[idx + w] + cur) / 5f;
-                        nv = Mathf.Lerp(cur, avg, Mathf.Clamp01(amount * fall));
+                        float average = (a[index - 1] + a[index + 1] + a[index - width] + a[index + width] + current) / 5f;
+                        nv = Mathf.Lerp(current, average, Mathf.Clamp01(amount * fall));
                         break;
                 }
                 nv = Mathf.Clamp01(nv);
-                if (nv != cur) { a[idx] = nv; changed = true; }
+                if (nv != current) { a[index] = nv; changed = true; }
             }
             return changed;
         }
 
-        public static void Add(string scene, TerrainStroke st)
+        public static void Add(string scene, TerrainStroke stroke)
         {
-            For(scene).Strokes.Add(st);
+            For(scene).Strokes.Add(stroke);
             Save();
         }
 
-        public static void RemoveLast(string scene, TerrainStroke st)
+        public static void RemoveLast(string scene, TerrainStroke stroke)
         {
-            For(scene).Strokes.Remove(st);
+            For(scene).Strokes.Remove(stroke);
             Save();
         }
 
@@ -194,56 +204,56 @@ namespace SteamRailway
         static void DabOn(Terrain terrain, BrushMode mode, float x, float z, float radius, float amount, float target, List<Undo> undo)
         {
             var td = terrain.terrainData;
-            var tp = terrain.transform.position;
+            var targetPoint = terrain.transform.position;
             var size = td.size;
-            int res = td.heightmapResolution;
-            float cx = size.x / (res - 1), cz = size.z / (res - 1);
-            int x0 = Mathf.Clamp(Mathf.FloorToInt((x - radius - tp.x) / cx) - 1, 0, res - 1);
-            int x1 = Mathf.Clamp(Mathf.CeilToInt((x + radius - tp.x) / cx) + 1, 0, res - 1);
-            int z0 = Mathf.Clamp(Mathf.FloorToInt((z - radius - tp.z) / cz) - 1, 0, res - 1);
-            int z1 = Mathf.Clamp(Mathf.CeilToInt((z + radius - tp.z) / cz) + 1, 0, res - 1);
-            int w = x1 - x0 + 1, h = z1 - z0 + 1;
-            if (w <= 2 || h <= 2) return;
+            int resolution = td.heightmapResolution;
+            float centerX = size.x / (resolution - 1), centerZ = size.z / (resolution - 1);
+            int startX = Mathf.Clamp(Mathf.FloorToInt((x - radius - targetPoint.x) / centerX) - 1, 0, resolution - 1);
+            int endX = Mathf.Clamp(Mathf.CeilToInt((x + radius - targetPoint.x) / centerX) + 1, 0, resolution - 1);
+            int startZ = Mathf.Clamp(Mathf.FloorToInt((z - radius - targetPoint.z) / centerZ) - 1, 0, resolution - 1);
+            int endZ = Mathf.Clamp(Mathf.CeilToInt((z + radius - targetPoint.z) / centerZ) + 1, 0, resolution - 1);
+            int width = endX - startX + 1, height = endZ - startZ + 1;
+            if (width <= 2 || height <= 2) return;
             // the brush must touch this terrain
-            if (x + radius < tp.x || x - radius > tp.x + size.x || z + radius < tp.z || z - radius > tp.z + size.z) return;
+            if (x + radius < targetPoint.x || x - radius > targetPoint.x + size.x || z + radius < targetPoint.z || z - radius > targetPoint.z + size.z) return;
 
-            var obj = td.GetHeights(x0, z0, w, h);
-            var hs = new Il2CppStructArray<float>(obj.Pointer);
-            if (hs.Length < w * h) return;
-            var src = new float[w * h];
-            for (int i = 0; i < src.Length; i++) src[i] = hs[i];
-            if (undo != null) undo.Add(new Undo { Td = td, X0 = x0, Z0 = z0, W = w, H = h, Data = (float[])src.Clone() });
+            var heights = HeightmapAccess.Read(td, startX, startZ, width, height);
 
-            float tgt = (target - tp.y) / size.y;
+            if (heights.Length < width * height) return;
+            var src = new float[width * height];
+            for (int index = 0; index < src.Length; index++) src[index] = heights[index];
+            if (undo != null) undo.Add(new Undo { Td = td, X0 = startX, Z0 = startZ, W = width, H = height, Data = (float[])src.Clone() });
+
+            float tgt = (target - targetPoint.y) / size.y;
             bool changed = false;
-            for (int iz = 0; iz < h; iz++)
-            for (int ix = 0; ix < w; ix++)
+            for (int rowIndex = 0; rowIndex < height; rowIndex++)
+            for (int columnIndex = 0; columnIndex < width; columnIndex++)
             {
-                float wx = tp.x + (x0 + ix) * cx, wz = tp.z + (z0 + iz) * cz;
-                float d = Mathf.Sqrt((wx - x) * (wx - x) + (wz - z) * (wz - z));
-                if (d >= radius) continue;
-                float f = Mathf.SmoothStep(1f, 0f, d / radius);
-                int idx = iz * w + ix;
-                float cur = src[idx], nv = cur;
+                float wx = targetPoint.x + (startX + columnIndex) * centerX, wz = targetPoint.z + (startZ + rowIndex) * centerZ;
+                float distance = Mathf.Sqrt((wx - x) * (wx - x) + (wz - z) * (wz - z));
+                if (distance >= radius) continue;
+                float factor = Mathf.SmoothStep(1f, 0f, distance / radius);
+                int index = rowIndex * width + columnIndex;
+                float current = src[index], nv = current;
                 switch (mode)
                 {
-                    case BrushMode.Raise: nv = cur + amount * f / size.y; break;
-                    case BrushMode.Lower: nv = cur - amount * f / size.y; break;
-                    case BrushMode.Flatten: nv = Mathf.Lerp(cur, tgt, Mathf.Clamp01(amount * f)); break;
-                    case BrushMode.Fill: if (cur < tgt) nv = Mathf.Lerp(cur, tgt, Mathf.Clamp01(amount * f)); break;
+                    case BrushMode.Raise: nv = current + amount * factor / size.y; break;
+                    case BrushMode.Lower: nv = current - amount * factor / size.y; break;
+                    case BrushMode.Flatten: nv = Mathf.Lerp(current, tgt, Mathf.Clamp01(amount * factor)); break;
+                    case BrushMode.Fill: if (current < tgt) nv = Mathf.Lerp(current, tgt, Mathf.Clamp01(amount * factor)); break;
                     case BrushMode.Smooth:
-                        if (ix > 0 && iz > 0 && ix < w - 1 && iz < h - 1)
+                        if (columnIndex > 0 && rowIndex > 0 && columnIndex < width - 1 && rowIndex < height - 1)
                         {
-                            float avg = (src[idx - 1] + src[idx + 1] + src[idx - w] + src[idx + w] + cur) / 5f;
-                            nv = Mathf.Lerp(cur, avg, Mathf.Clamp01(amount * f));
+                            float average = (src[index - 1] + src[index + 1] + src[index - width] + src[index + width] + current) / 5f;
+                            nv = Mathf.Lerp(current, average, Mathf.Clamp01(amount * factor));
                         }
                         break;
                 }
                 nv = Mathf.Clamp01(nv);
-                if (nv != cur) { hs[idx] = nv; changed = true; }
+                if (nv != current) { heights[index] = nv; changed = true; }
             }
             if (!changed) return;
-            td.SetHeightsDelayLOD(x0, z0, obj);
+            HeightmapAccess.Write(td, startX, startZ, heights, true);
             s_Dirty.Add(td.Pointer);
         }
 
@@ -261,14 +271,13 @@ namespace SteamRailway
 
         public static void Restore(List<Undo> undo)
         {
-            for (int i = undo.Count - 1; i >= 0; i--)
+            for (int index = undo.Count - 1; index >= 0; index--)
             {
-                var u = undo[i];
+                var u = undo[index];
                 if (u.Td == null) continue;
-                var obj = u.Td.GetHeights(u.X0, u.Z0, u.W, u.H);
-                var hs = new Il2CppStructArray<float>(obj.Pointer);
-                for (int k = 0; k < u.Data.Length && k < hs.Length; k++) hs[k] = u.Data[k];
-                u.Td.SetHeightsDelayLOD(u.X0, u.Z0, obj);
+                var heights = HeightmapAccess.Read(u.Td, u.X0, u.Z0, u.W, u.H);
+                for (int deepIndex = 0; deepIndex < u.Data.Length && deepIndex < heights.Length; deepIndex++) heights[deepIndex] = u.Data[deepIndex];
+                HeightmapAccess.Write(u.Td, u.X0, u.Z0, heights, true);
                 s_Dirty.Add(u.Td.Pointer);
             }
             Sync();
@@ -294,7 +303,7 @@ namespace SteamRailway
 
         const float DabRate = 0.05f;   // s between dabs while the mouse is held
 
-        static string ModeName(BrushMode m) => m switch
+        static string ModeName(BrushMode brushMode) => brushMode switch
         {
             BrushMode.Raise => L.T("Yükselt", "Raise"),
             BrushMode.Lower => L.T("Alçalt", "Lower"),
@@ -351,10 +360,10 @@ namespace SteamRailway
                 }
                 if (Time.time >= s_NextDab)
                 {
-                    float dt = s_NextDab == 0f ? DabRate : Mathf.Min(Time.time - (s_NextDab - DabRate), 0.2f);
+                    float deltaTime = s_NextDab == 0f ? DabRate : Mathf.Min(Time.time - (s_NextDab - DabRate), 0.2f);
                     s_NextDab = Time.time + DabRate;
                     // raise / lower in metres per second at the centre; the others as a share per second
-                    float amount = (s_Mode == BrushMode.Raise || s_Mode == BrushMode.Lower) ? 1.5f * s_Strength * dt : Mathf.Clamp01(3f * s_Strength * dt);
+                    float amount = (s_Mode == BrushMode.Raise || s_Mode == BrushMode.Lower) ? 1.5f * s_Strength * deltaTime : Mathf.Clamp01(3f * s_Strength * deltaTime);
                     TerrainEdits.Dab(s_Mode, hit.x, hit.z, s_Radius, amount, s_Target, s_StrokeUndo);
                     s_Stroke.Dabs.Add(new[] { R3(hit.x), R3(hit.z), R3(s_Radius), (float)System.Math.Round(amount, 5), R3(s_Target) });
                 }
@@ -362,7 +371,7 @@ namespace SteamRailway
             else if (s_Stroke != null) EndStroke();
         }
 
-        static float R3(float f) => (float)System.Math.Round(f, 3);
+        static float R3(float factor) => (float)System.Math.Round(factor, 3);
 
         static void EndStroke()
         {
@@ -381,10 +390,10 @@ namespace SteamRailway
         static void UndoStroke(string scene)
         {
             if (s_Undo.Count == 0) { CabControls.Message(L.T("Bu oturumda geri alınacak fırça darbesi yok.", "No brush stroke to undo in this session.")); return; }
-            var (st, undo) = s_Undo[s_Undo.Count - 1];
+            var (stroke, undo) = s_Undo[s_Undo.Count - 1];
             s_Undo.RemoveAt(s_Undo.Count - 1);
             TerrainEdits.Restore(undo);
-            TerrainEdits.RemoveLast(scene, st);
+            TerrainEdits.RemoveLast(scene, stroke);
             CabControls.Message(L.T("Son fırça darbesi geri alındı.", "Last brush stroke undone."));
         }
 

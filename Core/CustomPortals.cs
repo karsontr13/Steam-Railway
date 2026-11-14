@@ -64,70 +64,70 @@ namespace SteamRailway
         /// The transition ends in this region whose other end is set: (end here, the other end).
         public static List<(PortalEnd here, PortalEnd there)> Ends(string scene)
         {
-            var res = new List<(PortalEnd, PortalEnd)>();
-            foreach (var l in File_().Links)
+            var results = new List<(PortalEnd, PortalEnd)>();
+            foreach (var portalLink in File_().Links)
             {
-                if (l.A == null || l.B == null) continue;
-                if (l.A.Scene == scene) res.Add((l.A, l.B));
-                if (l.B.Scene == scene) res.Add((l.B, l.A));
+                if (portalLink.A == null || portalLink.B == null) continue;
+                if (portalLink.A.Scene == scene) results.Add((portalLink.A, portalLink.B));
+                if (portalLink.B.Scene == scene) results.Add((portalLink.B, portalLink.A));
             }
-            return res;
+            return results;
         }
 
         /// The spawn point of this region nearest to p (the game puts an arriving player there; we then board them).
-        static string NearestSpawn(Vector3 p)
+        static string NearestSpawn(Vector3 point)
         {
-            string best = ""; float bd = float.MaxValue;
-            foreach (var s in Object.FindObjectsOfType<PlayerSpawn>())
+            string best = ""; float bestDistance = float.MaxValue;
+            foreach (var spawn in Object.FindObjectsOfType<PlayerSpawn>())
             {
-                if (s == null) continue;
-                float d = (s.transform.position - p).sqrMagnitude;
-                if (d < bd) { bd = d; best = s.gameObject.name; }
+                if (spawn == null) continue;
+                float distance = (spawn.transform.position - point).sqrMagnitude;
+                if (distance < bestDistance) { bestDistance = distance; best = spawn.gameObject.name; }
             }
             return best;
         }
 
         static PortalLink Pending()
         {
-            foreach (var l in File_().Links) if (l.A != null && l.B == null) return l;
+            foreach (var portalLink in File_().Links) if (portalLink.A != null && portalLink.B == null) return portalLink;
             return null;
         }
 
         /// P in the track editor, at a point on a line. `away`: along the line, away from the player.
-        public static string Mark(string scene, Vector3 p, Vector3 away)
+        public static string Mark(string scene, Vector3 point, Vector3 away)
         {
-            var f = File_();
+            var portalFile = File_();
             var pending = Pending();
             if (pending == null || pending.A.Scene == scene)
             {
                 // the start: trains leave here going away from you (into the tunnel)
-                if (pending == null) { pending = new PortalLink { Id = "portal" + (f.Links.Count + 1) }; f.Links.Add(pending); }
-                pending.A = new PortalEnd { Scene = scene, Pos = CustomLines.F(p), Out = CustomLines.F(away), Spawn = NearestSpawn(p) };
+                if (pending == null) { pending = new PortalLink { Id = "portal" + (portalFile.Links.Count + 1) }; portalFile.Links.Add(pending); }
+                pending.A = new PortalEnd { Scene = scene, Pos = CustomLines.F(point), Out = CustomLines.F(away), Spawn = NearestSpawn(point) };
                 Save();
                 return L.T("Geçişin başlangıcı kaydedildi. Hedef bölgeye git, trenin çıkacağı yerde raya bakıp (trenin gideceği yöne dönük) P'ye bas.",
                            "Start of the transition saved. Go to the other region, look at the line where the train should come out (facing the way it should run) and press P.");
             }
             // the other end: trains come out here running away from you; they leave back the other way
-            pending.B = new PortalEnd { Scene = scene, Pos = CustomLines.F(p), Out = CustomLines.F(-away), Spawn = NearestSpawn(p) };
+            pending.B = new PortalEnd { Scene = scene, Pos = CustomLines.F(point), Out = CustomLines.F(-away), Spawn = NearestSpawn(point) };
             Save();
             return L.T($"Geçiş tamamlandı: {pending.A.Scene} ↔ {scene}. Raylar yeniden kurulunca çalışır (F9 ya da bölgeye yeniden gir).",
                        $"Transition done: {pending.A.Scene} ↔ {scene}. It works once the rails are laid again (F9 or enter the region again).");
         }
 
         /// Shift+P: removes the transition with an end nearest to p in this region (or the one being made).
-        public static string RemoveNear(string scene, Vector3 p)
+        public static string RemoveNear(string scene, Vector3 point)
         {
-            var f = File_();
-            PortalLink best = null; float bd = 15f * 15f;
-            foreach (var l in f.Links)
-                foreach (var e in new[] { l.A, l.B })
+            var portalFile = File_();
+            PortalLink best = null; float bestDistance = 15f * 15f;
+            foreach (var portalLink in portalFile.Links)
+                foreach (var portalEnd in new[] { portalLink.A, portalLink.B })
                 {
-                    if (e == null || e.Scene != scene) continue;
-                    float d = (CustomLines.V(e.Pos) - p).sqrMagnitude;
-                    if (d < bd) { bd = d; best = l; }
+                    if (portalEnd == null || portalEnd.Scene != scene) continue;
+                    float distance = (CustomLines.V(portalEnd.Pos) - point).sqrMagnitude;
+                    if (distance < bestDistance) { bestDistance = distance; best = portalLink; }
                 }
             if (best == null) return L.T("Yakında elle yapılmış bir geçiş yok.", "No hand-made transition near here.");
-            f.Links.Remove(best);
+            portalFile.Links.Remove(best);
             Save();
             return L.T("Geçiş silindi.", "Transition deleted.");
         }
@@ -136,13 +136,13 @@ namespace SteamRailway
         /// saves and loads the regions its own way), aimed at the other region.
         public static LoadScene MakeLoadScene(string toScene, string spawn)
         {
-            LoadScene src = null;
-            foreach (var ls in Object.FindObjectsOfType<LoadScene>()) if (ls != null) { src = ls; break; }
-            if (src == null) return null;
-            var go = Object.Instantiate(src.gameObject);
-            go.name = "SR_PortalLoad_" + toScene;
-            foreach (var c in go.GetComponentsInChildren<Collider>(true)) c.enabled = false;
-            var l = go.GetComponent<LoadScene>();
+            LoadScene sourceLoadScene = null;
+            foreach (var loadScene in Object.FindObjectsOfType<LoadScene>()) if (loadScene != null) { sourceLoadScene = loadScene; break; }
+            if (sourceLoadScene == null) return null;
+            var targetObject = Object.Instantiate(sourceLoadScene.gameObject);
+            targetObject.name = "SR_PortalLoad_" + toScene;
+            foreach (var collider in targetObject.GetComponentsInChildren<Collider>(true)) collider.enabled = false;
+            var l = targetObject.GetComponent<LoadScene>();
             l.m_SceneToLoad = toScene;
             l.m_ExitPointName = spawn ?? "";
             l.m_GUID = System.Guid.NewGuid().ToString();

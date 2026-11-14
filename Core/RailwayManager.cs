@@ -118,7 +118,7 @@ namespace SteamRailway
         public static SteamSim GetSim(TrainCar car)
         {
             if (!IsOurTrain(car)) return null;
-            return s_Sims.TryGetValue(car.name.Substring(TrainBuilder.NamePrefix.Length), out var sim) ? sim : null;
+            return s_Sims.TryGetValue(car.name.Substring(TrainBuilder.NamePrefix.Length), out var simulation) ? simulation : null;
         }
 
         // ---------------------------------------------------------------- scene lifecycle
@@ -151,14 +151,29 @@ namespace SteamRailway
             s_Scene = null;
         }
 
+        /// The game was changed to another save slot without the main menu being noticed: what is in memory belongs
+        /// to the previous game and must not carry over.
+        static bool SaveSlotChanged()
+        {
+            string slot = null;
+            try { slot = SaveGameSystem.GetCurrentSaveName(); } catch { }
+            if (string.IsNullOrEmpty(slot) || string.IsNullOrEmpty(s_Save.Slot) || slot == "autosave") return false;
+            return slot != s_Save.Slot;
+        }
+
         static IEnumerator BuildSceneDelayed(string sceneName)
         {
             // Let terrain, LoadScene objects and the player settle.
             yield return null;
             yield return null;
+            // The terrain tiles may stream in later on a slower machine: the terrain edits need them.
+            const int MaxFramesToWaitForTerrain = 600;
+            for (int waitedFrames = 0; waitedFrames < MaxFramesToWaitForTerrain && Terrain.activeTerrains.Length == 0; waitedFrames++)
+                yield return null;
             if (sceneName != s_Scene) yield break;
             // The save slot is read once per loaded game; between regions the state in memory is the newer one
             // (a train that just left a region must not come back from a save written before it left).
+            if (!s_NeedLoad && SaveSlotChanged()) s_NeedLoad = true;
             if (s_NeedLoad) { LoadSave(); s_NeedLoad = false; }
             BuildScene();
         }
@@ -174,12 +189,12 @@ namespace SteamRailway
             // the hand-made ground changes (once per loaded region)
             try { TerrainEdits.ApplyScene(s_Scene); }
             catch (System.Exception e) { SteamRailwayMod.Log.Error($"Applying the terrain edits failed: {e}"); }
-            var mat = FindTrackMaterial();
+            var material = FindTrackMaterial();
 
             // The region's own railway comes first; hand-made routes (routes.json) only where a region has none.
             s_Defs.Clear();
             var lines = new List<RailLine>();
-            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 // the lines saved for the region (built once from its rail pieces, then kept as saved)
@@ -194,11 +209,11 @@ namespace SteamRailway
             catch (System.Exception e) { SteamRailwayMod.Log.Error($"Reading the region's rails failed: {e}"); }
             if (lines.Count > 0)
             {
-                for (int i = 0; i < lines.Count; i++)
+                for (int index = 0; index < lines.Count; index++)
                 {
-                    var td = new TrackDef { Id = $"{s_Scene}_rail{i + 1}", Points = new List<Vector3>(lines[i].Points), Keep = lines[i].Keep, Original = lines[i] };
-                    td.Originals.Add(lines[i]);
-                    s_Defs.Add(td);
+                    var trackDef = new TrackDef { Id = $"{s_Scene}_rail{index + 1}", Points = new List<Vector3>(lines[index].Points), Keep = lines[index].Keep, Original = lines[index] };
+                    trackDef.Originals.Add(lines[index]);
+                    s_Defs.Add(trackDef);
                 }
                 var routes0 = RouteStore.GetRoutes(s_Scene);
                 if (routes0 != null && routes0.Count > 0)
@@ -211,9 +226,9 @@ namespace SteamRailway
                     foreach (var route in routes)
                     {
                         if (route.Points.Count < 2) continue;
-                        var pts = new List<Vector3>();
-                        for (int i = 0; i < route.Points.Count; i++) pts.Add(route.GetPoint(i));
-                        s_Defs.Add(new TrackDef { Id = route.Id, Points = pts, Keep = null });
+                        var points = new List<Vector3>();
+                        for (int index = 0; index < route.Points.Count; index++) points.Add(route.GetPoint(index));
+                        s_Defs.Add(new TrackDef { Id = route.Id, Points = points, Keep = null });
                     }
             }
             // the lines drawn with the track editor; one meeting another line's end becomes one line with it
@@ -223,11 +238,11 @@ namespace SteamRailway
                 CustomLines.Merge(s_Defs);
             }
             catch (System.Exception e) { SteamRailwayMod.Log.Error($"Adding the drawn lines failed: {e}"); }
-            foreach (var d in s_Defs)
+            foreach (var trackDef in s_Defs)
             {
                 // a fixed direction for each line (the pieces are found in no particular order)
-                var a = d.Points[0]; var b = d.Points[d.Points.Count - 1];
-                if (a.x + a.z > b.x + b.z) d.Points.Reverse();
+                var start = trackDef.Points[0]; var end = trackDef.Points[trackDef.Points.Count - 1];
+                if (start.x + start.z > end.x + end.z) trackDef.Points.Reverse();
             }
             if (Switches.Automatic)
             {
@@ -240,10 +255,10 @@ namespace SteamRailway
                 // no junctions for now: a line branching off another one is not built (its original pieces stay)
                 try
                 {
-                    foreach (var id in Switches.Branches(s_Defs))
+                    foreach (var identifier in Switches.Branches(s_Defs))
                     {
-                        s_Defs.RemoveAll(x => x.Id == id);
-                        SteamRailwayMod.Debug($"{id} branches off another line; left as it is (no switch).");
+                        s_Defs.RemoveAll(trackDef => trackDef.Id == identifier);
+                        SteamRailwayMod.Debug($"{identifier} branches off another line; left as it is (no switch).");
                     }
                 }
                 catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Finding the branch lines failed: {e.Message}"); }
@@ -256,9 +271,9 @@ namespace SteamRailway
                 try { Switches.LevelBranches(s_Defs, switchPoints); }
                 catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Levelling the branches failed: {e.Message}"); }
             }
-            foreach (var d in s_Defs)
+            foreach (var trackDef in s_Defs)
             {
-                var built = BuildTrack(d);
+                var built = BuildTrack(trackDef);
                 if (built != null) s_Tracks.Add(built);
             }
             // junctions first: their turnouts decide what is laid under the points
@@ -267,22 +282,22 @@ namespace SteamRailway
                 try
                 {
                     Switches.Find(s_Tracks, s_Save.Switches, Switches.Automatic ? null :
-                        (System.Func<Vector3, bool>)(p => switchPoints.Exists(q => (q - p).sqrMagnitude < 1.5f * 1.5f)));
+                        (System.Func<Vector3, bool>)(point => switchPoints.Exists(otherPoint => (otherPoint - point).sqrMagnitude < 1.5f * 1.5f)));
                 }
                 catch (System.Exception e) { SteamRailwayMod.Log.Error($"Finding the junctions failed: {e}"); }
             }
             OriginalRails.BeginClear();
-            foreach (var t in s_Tracks)
+            foreach (var track in s_Tracks)
             {
-                try { TrackBuilder.LayRails(t); }
-                catch (System.Exception e) { SteamRailwayMod.Log.Error($"Laying the rails of {t.Id} failed: {e}"); }
-                var def = s_Defs.Find(x => x.Id == t.Id);
-                if (def != null && def.Originals.Count > 0) OriginalRails.ClearLine(t);
+                try { TrackBuilder.LayRails(track); }
+                catch (System.Exception e) { SteamRailwayMod.Log.Error($"Laying the rails of {track.Id} failed: {e}"); }
+                var trackDef = s_Defs.Find(x => x.Id == track.Id);
+                if (trackDef != null && trackDef.Originals.Count > 0) OriginalRails.ClearLine(track);
             }
             OriginalRails.EndClear();
             Switches.RailsLaid();
             InstancedHider.Apply();
-            SteamRailwayMod.Debug($"{s_Scene}: lines and rails ready in {sw.ElapsedMilliseconds} ms.");
+            SteamRailwayMod.Debug($"{s_Scene}: lines and rails ready in {stopwatch.ElapsedMilliseconds} ms.");
 
             var arrival = s_Save.Arrival != null && s_Save.Arrival.ToScene == s_Scene ? s_Save.Arrival : null;
             if (s_Save.Arrival != null && arrival == null)
@@ -296,32 +311,32 @@ namespace SteamRailway
                 return;
             }
             // snow embankments under the drawn lines, then the snow cleared over every line
-            foreach (var fp in CustomLines.FillPaths(s_Scene))
+            foreach (var fillPath in CustomLines.FillPaths(s_Scene))
             {
-                try { TerrainCarve.Fill(fp); }
+                try { TerrainCarve.Fill(fillPath); }
                 catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Snow embankment failed: {e.Message}"); }
             }
             // under the points the branch was raised to the main line's height: snow under it there too
-            foreach (var tsw in Switches.All)
+            foreach (var trackSwitch in Switches.All)
             {
                 try
                 {
-                    var pts = new List<Vector3>();
+                    var points = new List<Vector3>();
                     for (float u = 0f; u <= 32f; u += 2f)
                     {
-                        float sb = tsw.BJoin + tsw.InB * u;
-                        if (sb < 0f || sb > tsw.B.Path.Length) break;
-                        tsw.B.Path.Sample(sb, out var q, out _);
-                        pts.Add(q);
+                        float secondArc = trackSwitch.BJoin + trackSwitch.InB * u;
+                        if (secondArc < 0f || secondArc > trackSwitch.B.Path.Length) break;
+                        trackSwitch.B.Path.Sample(secondArc, out var otherPoint, out _);
+                        points.Add(otherPoint);
                     }
-                    if (pts.Count >= 2) TerrainCarve.Fill(CurvePath.CatmullRom(pts));
+                    if (points.Count >= 2) TerrainCarve.Fill(CurvePath.CatmullRom(points));
                 }
                 catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Snow under the points failed: {e.Message}"); }
             }
-            foreach (var t in s_Tracks)
+            foreach (var track in s_Tracks)
             {
-                try { TerrainCarve.Lower(t.Path); }
-                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Lowering the snow along {t.Id} failed: {e.Message}"); }
+                try { TerrainCarve.Lower(track.Path); }
+                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Lowering the snow along {track.Id} failed: {e.Message}"); }
             }
             Switches.GroundStands();
             FindPortals();
@@ -333,7 +348,7 @@ namespace SteamRailway
             if (!s_Save.Visited.Contains(s_Scene)) s_Save.Visited.Add(s_Scene);
             if (s_Save.Scenes.TryGetValue(s_Scene, out var states) && states.Count > 0)
             {
-                foreach (var st in states) { Remap(st); Spawn(st, mat); }
+                foreach (var trainState in states) { Remap(trainState); Spawn(trainState, material); }
             }
             else if (!s_Save.TrainCreated && arrival == null)
             {
@@ -343,13 +358,13 @@ namespace SteamRailway
                 if (start == null || start.Scene == s_Scene)
                 {
                     s_Save.TrainCreated = true;
-                    var st = new TrainState { Guid = System.Guid.NewGuid().ToString(), RouteId = s_Tracks[0].Id, SplinePos = DefaultSpawnMeters };
-                    if (start != null) PlaceAtStart(st, start);
-                    Spawn(st, mat);
+                    var trainState = new TrainState { Guid = System.Guid.NewGuid().ToString(), RouteId = s_Tracks[0].Id, SplinePos = DefaultSpawnMeters };
+                    if (start != null) PlaceAtStart(trainState, start);
+                    Spawn(trainState, material);
                 }
             }
             s_Remap.Clear();
-            if (arrival != null) Arrive(arrival, entry, mat);
+            if (arrival != null) Arrive(arrival, entry, material);
             if (s_WalkToScene != null && s_WalkToScene == s_Scene)
             {
                 MelonCoroutines.Start(PlaceWalker(s_WalkToPos, s_WalkToDir));
@@ -360,23 +375,23 @@ namespace SteamRailway
 
         /// The new game's locomotive: on the line nearest to the start point, chimney facing the start direction,
         /// boiler and tender full, everything in order.
-        static void PlaceAtStart(TrainState st, StartPoint start)
+        static void PlaceAtStart(TrainState trainState, StartPoint start)
         {
-            var p = new Vector3(start.Pos[0], start.Pos[1], start.Pos[2]);
-            BuiltTrack best = null; float bd = float.MaxValue, bs = 0f;
-            foreach (var t in s_Tracks)
+            var point = new Vector3(start.Pos[0], start.Pos[1], start.Pos[2]);
+            BuiltTrack best = null; float bestDistance = float.MaxValue, bestArc = 0f;
+            foreach (var track in s_Tracks)
             {
-                float sp = t.Path.NearestDistance(p, out float d);
-                if (d < bd) { bd = d; best = t; bs = sp; }
+                float speed = track.Path.NearestDistance(point, out float distance);
+                if (distance < bestDistance) { bestDistance = distance; best = track; bestArc = speed; }
             }
             if (best == null) return;
-            if (bd > 30f) SteamRailwayMod.Log.Warning($"The start point is {bd:F0} m from the nearest line; the train stands on the line anyway.");
-            st.RouteId = best.Id;
-            st.SplinePos = Mathf.Clamp(bs * best.Spline.Length / Mathf.Max(1f, best.Path.Length), 2f, best.Spline.Length - 2f);
-            best.Path.Sample(bs, out _, out var tan);
-            var dir = start.Dir != null && start.Dir.Length >= 3 ? new Vector3(start.Dir[0], 0f, start.Dir[2]) : Vector3.zero;
-            int facing = dir.sqrMagnitude < 0.01f || Vector3.Dot(new Vector3(tan.x, 0f, tan.z), dir) >= 0f ? 1 : -1;
-            st.Sim = new SimState
+            if (bestDistance > 30f) SteamRailwayMod.Log.Warning($"The start point is {bestDistance:F0} m from the nearest line; the train stands on the line anyway.");
+            trainState.RouteId = best.Id;
+            trainState.SplinePos = Mathf.Clamp(bestArc * best.Spline.Length / Mathf.Max(1f, best.Path.Length), 2f, best.Spline.Length - 2f);
+            best.Path.Sample(bestArc, out _, out var tangent);
+            var direction = start.Dir != null && start.Dir.Length >= 3 ? new Vector3(start.Dir[0], 0f, start.Dir[2]) : Vector3.zero;
+            int facing = direction.sqrMagnitude < 0.01f || Vector3.Dot(new Vector3(tangent.x, 0f, tangent.z), direction) >= 0f ? 1 : -1;
+            trainState.Sim = new SimState
             {
                 Facing = facing,
                 BoilerWater = SteamSim.BoilerCapacity,
@@ -384,15 +399,15 @@ namespace SteamRailway
                 BoilerCondition = 100f,
                 ValveCondition = 100f,
             };
-            SteamRailwayMod.Log.Msg($"New game: the locomotive stands on {best.Id} at {st.SplinePos:F0} m, chimney {(facing > 0 ? "towards the end" : "towards the start")} of the line, boiler and tender full.");
+            SteamRailwayMod.Log.Msg($"New game: the locomotive stands on {best.Id} at {trainState.SplinePos:F0} m, chimney {(facing > 0 ? "towards the end" : "towards the start")} of the line, boiler and tender full.");
         }
 
-        static BuiltTrack BuildTrack(TrackDef d)
+        static BuiltTrack BuildTrack(TrackDef trackDef)
         {
-            var pts = new List<Vector3>(d.Points);
-            if (s_Save.Reversed.TryGetValue(d.Id, out bool rev) && rev) pts.Reverse();
-            var built = TrackBuilder.Build(d.Id, pts, d.Keep);
-            if (built != null) foreach (var o in d.Originals) OriginalRails.HideReplaced(o);
+            var points = new List<Vector3>(trackDef.Points);
+            if (s_Save.Reversed.TryGetValue(trackDef.Id, out bool reversed) && reversed) points.Reverse();
+            var built = TrackBuilder.Build(trackDef.Id, points, trackDef.Keep);
+            if (built != null) foreach (var line in trackDef.Originals) OriginalRails.HideReplaced(line);
             return built;
         }
 
@@ -417,33 +432,33 @@ namespace SteamRailway
             var player = GameManager.GetPlayerObject();
             if (player == null) return;
             var pp = player.transform.position;
-            foreach (var w in s_Walk)
+            foreach (var walkPortal in s_Walk)
             {
-                var d = pp - w.Pos;
-                float along = Vector3.Dot(d, w.Out);
-                float lat = Mathf.Abs(Vector3.Dot(d, Vector3.Cross(Vector3.up, w.Out)));
-                if (lat > 4f || Mathf.Abs(d.y) > 5f || Mathf.Abs(along) > 10f) { w.PrevAlong = float.NaN; continue; }
-                bool crossed = !float.IsNaN(w.PrevAlong) && w.PrevAlong < 0f && along >= 0f;
-                w.PrevAlong = along;
+                var direction = pp - walkPortal.Pos;
+                float along = Vector3.Dot(direction, walkPortal.Out);
+                float lateral = Mathf.Abs(Vector3.Dot(direction, Vector3.Cross(Vector3.up, walkPortal.Out)));
+                if (lateral > 4f || Mathf.Abs(direction.y) > 5f || Mathf.Abs(along) > 10f) { walkPortal.PrevAlong = float.NaN; continue; }
+                bool crossed = !float.IsNaN(walkPortal.PrevAlong) && walkPortal.PrevAlong < 0f && along >= 0f;
+                walkPortal.PrevAlong = along;
                 if (!crossed) continue;
-                WalkTransit(w);
+                WalkTransit(walkPortal);
                 return;
             }
         }
 
-        static void WalkTransit(WalkPortal w)
+        static void WalkTransit(WalkPortal walkPortal)
         {
             s_Transiting = true;
-            s_WalkToScene = w.There.Scene;
-            s_WalkToPos = CustomLines.V(w.There.Pos);
-            var od = CustomLines.V(w.There.Out); od.y = 0f;
+            s_WalkToScene = walkPortal.There.Scene;
+            s_WalkToPos = CustomLines.V(walkPortal.There.Pos);
+            var od = CustomLines.V(walkPortal.There.Out); od.y = 0f;
             s_WalkToDir = -od.normalized;                     // into the other region, away from its portal
-            SteamRailwayMod.Log.Msg($"On foot through the rail transition to {w.There.Scene}.");
+            SteamRailwayMod.Log.Msg($"On foot through the rail transition to {walkPortal.There.Scene}.");
             try
             {
-                var ls = CustomPortals.MakeLoadScene(w.There.Scene, w.There.Spawn);
-                if (ls == null) throw new System.Exception("no transition object to copy in this region");
-                ls.Activate(true);
+                var loadScene = CustomPortals.MakeLoadScene(walkPortal.There.Scene, walkPortal.There.Spawn);
+                if (loadScene == null) throw new System.Exception("no transition object to copy in this region");
+                loadScene.Activate(true);
             }
             catch (System.Exception e)
             {
@@ -454,43 +469,43 @@ namespace SteamRailway
         }
 
         /// The game puts the player at a spawn point of the region; they are moved to the transition's end.
-        static IEnumerator PlaceWalker(Vector3 pos, Vector3 dir)
+        static IEnumerator PlaceWalker(Vector3 pos, Vector3 direction)
         {
             float start = Time.realtimeSinceStartup;
-            var p0 = GameManager.GetPlayerObject();
-            Vector3 last = p0 != null ? p0.transform.position : Vector3.zero;
+            var sourceObject = GameManager.GetPlayerObject();
+            Vector3 last = sourceObject != null ? sourceObject.transform.position : Vector3.zero;
             float still = 0f;
             while (Time.realtimeSinceStartup - start < 10f)
             {
                 yield return null;
                 var player = GameManager.GetPlayerObject();
                 if (player == null) continue;
-                var p = player.transform.position;
-                bool jumped = (p - last).sqrMagnitude > 4f;
-                still = (p - last).sqrMagnitude < 0.0025f ? still + Time.unscaledDeltaTime : 0f;
-                last = p;
+                var point = player.transform.position;
+                bool jumped = (point - last).sqrMagnitude > 4f;
+                still = (point - last).sqrMagnitude < 0.0025f ? still + Time.unscaledDeltaTime : 0f;
+                last = point;
                 bool fadingIn = false;
                 try { fadingIn = !CameraFade.IsFadedOut || CameraFade.IsFadingIn; } catch { }
                 if (jumped || (fadingIn && Time.realtimeSinceStartup - start > 0.2f) || still > 1.5f) break;
             }
             // on the ground at the line's height (not on top of a rock or a tunnel roof above it)
-            var flat = pos + dir * 6f;
+            var flat = pos + direction * 6f;
             float groundY = float.MinValue;
-            foreach (var h in Physics.RaycastAll(new Vector3(flat.x, pos.y + 1.5f, flat.z), Vector3.down, 6f, ~0, QueryTriggerInteraction.Ignore))
+            foreach (var hit in Physics.RaycastAll(new Vector3(flat.x, pos.y + 1.5f, flat.z), Vector3.down, 6f, ~0, QueryTriggerInteraction.Ignore))
             {
-                if (h.collider.isTrigger || h.point.y <= groundY) continue;
+                if (hit.collider.isTrigger || hit.point.y <= groundY) continue;
                 bool ours = false;
-                for (var x = h.collider.transform; x != null; x = x.parent) if (x.name.StartsWith("CHARACTER_FPSPlayer")) { ours = true; break; }
-                if (!ours) groundY = h.point.y;
+                for (var node = hit.collider.transform; node != null; node = node.parent) if (node.name.StartsWith("CHARACTER_FPSPlayer")) { ours = true; break; }
+                if (!ours) groundY = hit.point.y;
             }
             if (groundY == float.MinValue) groundY = pos.y - RailPieces.RailTop;
             var target = new Vector3(flat.x, groundY + 0.05f, flat.z);
-            var rot = Quaternion.LookRotation(dir.sqrMagnitude > 0.01f ? dir : Vector3.forward, Vector3.up);
+            var rotation = Quaternion.LookRotation(direction.sqrMagnitude > 0.01f ? direction : Vector3.forward, Vector3.up);
             for (int attempt = 0; attempt < 3; attempt++)
             {
-                try { GameManager.GetPlayerManagerComponent().TeleportPlayer(target, rot); }
+                try { GameManager.GetPlayerManagerComponent().TeleportPlayer(target, rotation); }
                 catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Placing the player failed: {e.Message}"); yield break; }
-                for (int k = 0; k < 30; k++) yield return null;
+                for (int deepIndex = 0; deepIndex < 30; deepIndex++) yield return null;
                 var player = GameManager.GetPlayerObject();
                 if (player == null || (player.transform.position - target).magnitude < 5f) yield break;
             }
@@ -500,52 +515,52 @@ namespace SteamRailway
         {
             s_Portals.Clear();
             s_Walk.Clear();
-            foreach (var ls in Object.FindObjectsOfType<LoadScene>())
+            foreach (var loadScene in Object.FindObjectsOfType<LoadScene>())
             {
-                if (ls == null || !ls.m_TransitionOnContact || string.IsNullOrEmpty(ls.m_SceneToLoad) || ls.m_SceneToLoad == s_Scene) continue;
-                if (ls.GetComponent<Collider>() == null) continue;
-                var col = ls.GetComponent<Collider>();
-                foreach (var t in s_Tracks)
+                if (loadScene == null || !loadScene.m_TransitionOnContact || string.IsNullOrEmpty(loadScene.m_SceneToLoad) || loadScene.m_SceneToLoad == s_Scene) continue;
+                if (loadScene.GetComponent<Collider>() == null) continue;
+                var collider = loadScene.GetComponent<Collider>();
+                foreach (var track in s_Tracks)
                 {
-                    float sp = t.Path.NearestDistance(ls.transform.position, out float hd);
-                    float len = t.Path.Length;
+                    float speed = track.Path.NearestDistance(loadScene.transform.position, out float hd);
+                    float length = track.Path.Length;
                     // where the line really runs through the trigger (a plane's centre may lie metres to the side)
-                    bool touches = Touches(t, col, out float in0, out float in1);
+                    bool touches = Touches(track, collider, out float in0, out float in1);
                     if (!touches && hd > 18f) continue;
-                    bool atEnd = touches ? (in0 + in1) * 0.5f > len * 0.5f : sp > len * 0.5f;
-                    float edge = touches ? (atEnd ? in0 : in1) : sp;
-                    if (atEnd ? edge < len - 300f : edge > 300f) continue;
+                    bool atEnd = touches ? (in0 + in1) * 0.5f > length * 0.5f : speed > length * 0.5f;
+                    float edge = touches ? (atEnd ? in0 : in1) : speed;
+                    if (atEnd ? edge < length - 300f : edge > 300f) continue;
                     // path metres -> spline metres (the two curves are nearly the same length)
-                    float k = t.Spline.Length / Mathf.Max(1f, len);
-                    float s = edge * k;
-                    float safe = atEnd ? s - BufferFront - ClearOfTrigger : s + BufferFront + ClearOfTrigger;
-                    safe = Mathf.Clamp(safe, 2f, t.Spline.Length - 2f);
-                    s_Portals.Add(new Portal { Ls = ls, Track = t, S = s, AtEnd = atEnd, To = ls.m_SceneToLoad, Safe = safe });
-                    SteamRailwayMod.Debug($"Rail transition to {ls.m_SceneToLoad} on {t.Id} at {s:F0} m ({(atEnd ? "end" : "start")}, {(touches ? "trigger crossed" : "trigger beside the line")}), trains stand at {safe:F0} m.");
+                    float scale = track.Spline.Length / Mathf.Max(1f, length);
+                    float arcLength = edge * scale;
+                    float safe = atEnd ? arcLength - BufferFront - ClearOfTrigger : arcLength + BufferFront + ClearOfTrigger;
+                    safe = Mathf.Clamp(safe, 2f, track.Spline.Length - 2f);
+                    s_Portals.Add(new Portal { Ls = loadScene, Track = track, S = arcLength, AtEnd = atEnd, To = loadScene.m_SceneToLoad, Safe = safe });
+                    SteamRailwayMod.Debug($"Rail transition to {loadScene.m_SceneToLoad} on {track.Id} at {arcLength:F0} m ({(atEnd ? "end" : "start")}, {(touches ? "trigger crossed" : "trigger beside the line")}), trains stand at {safe:F0} m.");
                 }
             }
             // the transitions made with the track editor: a point on a line and the way out through it
             foreach (var (here, there) in CustomPortals.Ends(s_Scene))
             {
-                var p = CustomLines.V(here.Pos);
+                var point = CustomLines.V(here.Pos);
                 var outDir = CustomLines.V(here.Out);
-                BuiltTrack best = null; float bd = 6f, bs = 0f;
-                foreach (var t in s_Tracks)
+                BuiltTrack best = null; float bestDistance = 6f, bestArc = 0f;
+                foreach (var track in s_Tracks)
                 {
-                    float sp = t.Path.NearestDistance(p, out float hd);
-                    if (hd < bd) { bd = hd; best = t; bs = sp; }
+                    float speed = track.Path.NearestDistance(point, out float hd);
+                    if (hd < bestDistance) { bestDistance = hd; best = track; bestArc = speed; }
                 }
-                if (best == null) { SteamRailwayMod.Log.Warning($"Transition to {there.Scene}: no line at {p}."); continue; }
-                best.Path.Sample(bs, out _, out var tan);
-                bool forward = Vector3.Dot(tan, outDir) > 0f;          // leaves towards the line's end
-                float k = best.Spline.Length / Mathf.Max(1f, best.Path.Length);
-                float s = bs * k;
-                float safe = Mathf.Clamp(forward ? s - BufferFront - ClearOfTrigger : s + BufferFront + ClearOfTrigger, 2f, best.Spline.Length - 2f);
-                s_Portals.Add(new Portal { Track = best, S = s, AtEnd = forward, To = there.Scene, Safe = safe, Custom = true, Spawn = there.Spawn });
-                best.Path.Sample(bs, out var onLine, out _);
+                if (best == null) { SteamRailwayMod.Log.Warning($"Transition to {there.Scene}: no line at {point}."); continue; }
+                best.Path.Sample(bestArc, out _, out var tangent);
+                bool forward = Vector3.Dot(tangent, outDir) > 0f;          // leaves towards the line's end
+                float scale = best.Spline.Length / Mathf.Max(1f, best.Path.Length);
+                float arcLength = bestArc * scale;
+                float safe = Mathf.Clamp(forward ? arcLength - BufferFront - ClearOfTrigger : arcLength + BufferFront + ClearOfTrigger, 2f, best.Spline.Length - 2f);
+                s_Portals.Add(new Portal { Track = best, S = arcLength, AtEnd = forward, To = there.Scene, Safe = safe, Custom = true, Spawn = there.Spawn });
+                best.Path.Sample(bestArc, out var onLine, out _);
                 var flatOut = outDir; flatOut.y = 0f;
                 s_Walk.Add(new WalkPortal { Pos = onLine, Out = flatOut.normalized, There = there });
-                SteamRailwayMod.Log.Msg($"Hand-made rail transition to {there.Scene} on {best.Id} at {s:F0} m, trains stand at {safe:F0} m.");
+                SteamRailwayMod.Log.Msg($"Hand-made rail transition to {there.Scene} on {best.Id} at {arcLength:F0} m, trains stand at {safe:F0} m.");
             }
         }
 
@@ -553,24 +568,24 @@ namespace SteamRailway
         const float ClearOfTrigger = 14f;    // m between the trigger and the nearest buffer of a standing train
 
         /// The stretch of the line (path metres) inside the trigger, checked at the rails and at cab height.
-        static bool Touches(BuiltTrack t, Collider col, out float in0, out float in1)
+        static bool Touches(BuiltTrack track, Collider collider, out float in0, out float in1)
         {
             in0 = float.MaxValue; in1 = float.MinValue;
-            if (col == null) return false;
-            var path = t.Path;
-            bool exact = col is BoxCollider || col is SphereCollider || col is CapsuleCollider || (col is MeshCollider mc && mc.convex);
-            var bounds = col.bounds;
+            if (collider == null) return false;
+            var path = track.Path;
+            bool exact = collider is BoxCollider || collider is SphereCollider || collider is CapsuleCollider || (collider is MeshCollider meshCollider && meshCollider.convex);
+            var bounds = collider.bounds;
             bounds.Expand(0.5f);
-            for (float d = 0f; d <= path.Length; d += 0.5f)
+            for (float distance = 0f; distance <= path.Length; distance += 0.5f)
             {
-                path.Sample(d, out var p, out _);
-                for (int h = 0; h < 3; h++)
+                path.Sample(distance, out var point, out _);
+                for (int height = 0; height < 3; height++)
                 {
-                    var q = p + Vector3.up * (0.5f + h * 1.5f);
-                    if (!bounds.Contains(q)) continue;
-                    bool inside = !exact || (col.ClosestPoint(q) - q).sqrMagnitude < 0.04f;
+                    var otherPoint = point + Vector3.up * (0.5f + height * 1.5f);
+                    if (!bounds.Contains(otherPoint)) continue;
+                    bool inside = !exact || (collider.ClosestPoint(otherPoint) - otherPoint).sqrMagnitude < 0.04f;
                     if (!inside) continue;
-                    in0 = Mathf.Min(in0, d); in1 = Mathf.Max(in1, d);
+                    in0 = Mathf.Min(in0, distance); in1 = Mathf.Max(in1, distance);
                     break;
                 }
             }
@@ -578,41 +593,41 @@ namespace SteamRailway
         }
 
         /// A train standing in (or too close to) a transition is moved clear of it, inwards.
-        static float ClearOfPortals(string trackId, float pos)
+        static float ClearOfPortals(string trackId, float position)
         {
-            foreach (var p in s_Portals)
+            foreach (var portal in s_Portals)
             {
-                if (p.Track.Id != trackId) continue;
-                if (p.AtEnd && pos > p.Safe) pos = p.Safe;
-                if (!p.AtEnd && pos < p.Safe) pos = p.Safe;
+                if (portal.Track.Id != trackId) continue;
+                if (portal.AtEnd && position > portal.Safe) position = portal.Safe;
+                if (!portal.AtEnd && position < portal.Safe) position = portal.Safe;
             }
-            return pos;
+            return position;
         }
 
         /// The game reports a train car running into a transition.
-        public static void TrainHitTransition(TrainCar car, LoadScene ls)
+        public static void TrainHitTransition(TrainCar car, LoadScene loadScene)
         {
-            if (s_Transiting || car == null || ls == null) return;
-            var t = s_Trains.Find(x => x.Train != null && x.Train.Pointer == car.Pointer);
-            if (t == null) return;
-            var p = s_Portals.Find(x => x.Ls != null && x.Ls.Pointer == ls.Pointer && x.Track.Id == t.RouteId);
-            if (p == null) return;
-            if (t.Train.IsInsideTrain) BeginTransit(t, p, t.Sim.LineVelocity);
+            if (s_Transiting || car == null || loadScene == null) return;
+            var liveTrain = s_Trains.Find(x => x.Train != null && x.Train.Pointer == car.Pointer);
+            if (liveTrain == null) return;
+            var portal = s_Portals.Find(x => x.Ls != null && x.Ls.Pointer == loadScene.Pointer && x.Track.Id == liveTrain.RouteId);
+            if (portal == null) return;
+            if (liveTrain.Train.IsInsideTrain) BeginTransit(liveTrain, portal, liveTrain.Sim.LineVelocity);
             else
             {
                 // nobody aboard: the train stops at the transition
-                t.Sim.RestoreMotion(0f);
-                t.Train.m_SplineController.Position = p.Safe;
+                liveTrain.Sim.RestoreMotion(0f);
+                liveTrain.Train.m_SplineController.Position = portal.Safe;
             }
         }
 
         /// The player touches a transition trigger. Riding one of our trains on that line, the train goes along;
         /// the train's own colliders never set it off. Returns false to keep the game from handling it.
-        public static bool AllowTransitionTrigger(LoadScene ls, Collider other)
+        public static bool AllowTransitionTrigger(LoadScene loadScene, Collider other)
         {
-            if (ls == null) return true;
+            if (loadScene == null) return true;
             // our own transition is under way: the game must not start a second one from the same trigger
-            if (s_Transiting) return !s_Portals.Exists(x => x.Ls != null && x.Ls.Pointer == ls.Pointer);
+            if (s_Transiting) return !s_Portals.Exists(portal => portal.Ls != null && portal.Ls.Pointer == loadScene.Pointer);
             try
             {
                 if (other != null)
@@ -623,11 +638,11 @@ namespace SteamRailway
                 if (!SteamTrain.IsInsideSteamTrain) return true;
                 var tracked = SteamTrain.s_TrackedSteamTrain;
                 if (tracked == null) return true;
-                var t = s_Trains.Find(x => x.Train != null && x.Train.Pointer == tracked.Pointer);
-                if (t == null) return true;
-                var p = s_Portals.Find(x => x.Ls != null && x.Ls.Pointer == ls.Pointer && x.Track.Id == t.RouteId);
-                if (p == null) return true;
-                BeginTransit(t, p, t.Sim.LineVelocity);
+                var liveTrain = s_Trains.Find(x => x.Train != null && x.Train.Pointer == tracked.Pointer);
+                if (liveTrain == null) return true;
+                var portal = s_Portals.Find(x => x.Ls != null && x.Ls.Pointer == loadScene.Pointer && x.Track.Id == liveTrain.RouteId);
+                if (portal == null) return true;
+                BeginTransit(liveTrain, portal, liveTrain.Sim.LineVelocity);
                 return false;
             }
             catch (System.Exception e)
@@ -638,34 +653,34 @@ namespace SteamRailway
         }
 
         /// The player drives the train into a transition: take the train along to the next region.
-        static void CheckPortals(LiveTrain t)
+        static void CheckPortals(LiveTrain liveTrain)
         {
-            var tr = t.Train;
-            if (tr == null || t.Sim == null || !tr.IsInsideTrain) return;
-            float v = t.Sim.LineVelocity;
-            if (Mathf.Abs(v) < 0.2f) return;
-            float pos = tr.m_SplineController.Position;
-            float lead = v > 0f ? pos + BufferFront : pos - BufferRear;
-            foreach (var p in s_Portals)
+            var train = liveTrain.Train;
+            if (train == null || liveTrain.Sim == null || !train.IsInsideTrain) return;
+            float value = liveTrain.Sim.LineVelocity;
+            if (Mathf.Abs(value) < 0.2f) return;
+            float position = train.m_SplineController.Position;
+            float lead = value > 0f ? position + BufferFront : position - BufferRear;
+            foreach (var portal in s_Portals)
             {
-                if (p.Track.Id != t.RouteId) continue;
-                bool hit = p.AtEnd ? v > 0f && lead >= p.S - 1f : v < 0f && lead <= p.S + 1f;
+                if (portal.Track.Id != liveTrain.RouteId) continue;
+                bool hit = portal.AtEnd ? value > 0f && lead >= portal.S - 1f : value < 0f && lead <= portal.S + 1f;
                 // a hand-made transition lies in the middle of a line: only right at it
-                if (hit && p.Custom && Mathf.Abs(lead - p.S) > 25f) hit = false;
+                if (hit && portal.Custom && Mathf.Abs(lead - portal.S) > 25f) hit = false;
                 if (!hit) continue;
-                BeginTransit(t, p, v);
+                BeginTransit(liveTrain, portal, value);
                 return;
             }
         }
 
-        static void BeginTransit(LiveTrain t, Portal p, float v)
+        static void BeginTransit(LiveTrain liveTrain, Portal portal, float value)
         {
             s_Transiting = true;
             CaptureStates();
             TrainState state = null;
             if (s_Save.Scenes.TryGetValue(s_Scene, out var list))
             {
-                state = list.Find(x => x.Guid == t.Guid);
+                state = list.Find(trainState => trainState.Guid == liveTrain.Guid);
                 if (state != null) list.Remove(state);
             }
             if (state == null) { s_Transiting = false; return; }
@@ -673,24 +688,24 @@ namespace SteamRailway
             s_Save.Arrival = new PendingArrival
             {
                 FromScene = s_Scene,
-                ToScene = p.To,
+                ToScene = portal.To,
                 Train = state,
-                Speed = Mathf.Abs(v),
+                Speed = Mathf.Abs(value),
                 // chimney first? (standing still: the way that leads out through this transition)
-                Forward = Mathf.Abs(v) > 0.05f ? t.Sim.Velocity > 0f : (p.AtEnd ? 1 : -1) * t.Sim.FacingSign > 0,
-                FallbackRouteId = t.RouteId,
-                FallbackPos = p.AtEnd ? p.S - 30f : p.S + 30f,
+                Forward = Mathf.Abs(value) > 0.05f ? liveTrain.Sim.Velocity > 0f : (portal.AtEnd ? 1 : -1) * liveTrain.Sim.FacingSign > 0,
+                FallbackRouteId = liveTrain.RouteId,
+                FallbackPos = portal.AtEnd ? portal.S - 30f : portal.S + 30f,
             };
-            SteamRailwayMod.Log.Msg($"Train {t.Guid} leaves {s_Scene} for {p.To}.");
+            SteamRailwayMod.Log.Msg($"Train {liveTrain.Guid} leaves {s_Scene} for {portal.To}.");
             // The train is no longer this region's (its save must not keep it), but it keeps running with the
             // player aboard while the screen fades; the player leaves the cab only once it is black.
-            s_Trains.Remove(t);
-            s_Departing = t;
+            s_Trains.Remove(liveTrain);
+            s_Departing = liveTrain;
             try
             {
-                var ls = p.Ls != null ? p.Ls : CustomPortals.MakeLoadScene(p.To, p.Spawn);
-                if (ls == null) throw new System.Exception("no transition object to copy in this region");
-                ls.Activate(true);
+                var loadScene = portal.Ls != null ? portal.Ls : CustomPortals.MakeLoadScene(portal.To, portal.Spawn);
+                if (loadScene == null) throw new System.Exception("no transition object to copy in this region");
+                loadScene.Activate(true);
             }
             catch (System.Exception e)
             {
@@ -705,39 +720,39 @@ namespace SteamRailway
         public static void OnPerformSceneLoad()
         {
             CaptureStates();
-            var t = s_Departing;
+            var liveTrain = s_Departing;
             s_Departing = null;
-            if (t == null) return;
-            var tr = t.Train;
+            if (liveTrain == null) return;
+            var train = liveTrain.Train;
             try
             {
-                if (tr != null && tr.IsInsideTrain)
+                if (train != null && train.IsInsideTrain)
                 {
-                    tr.ExitSteamTrain(tr.transform.Find("ExitPoint"));
-                    tr.FinishExitingSteamTrainAfterFadeOut();
+                    train.ExitSteamTrain(train.transform.Find("ExitPoint"));
+                    train.FinishExitingSteamTrainAfterFadeOut();
                 }
             }
             catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Leaving the cab for the transition: {e.Message}"); }
-            s_Sims.Remove(t.Guid);
-            try { t.Sim.Audio?.StopAll(); } catch { }
-            if (tr != null) Object.Destroy(tr.gameObject);
+            s_Sims.Remove(liveTrain.Guid);
+            try { liveTrain.Sim.Audio?.StopAll(); } catch { }
+            if (train != null) Object.Destroy(train.gameObject);
         }
 
         /// Picks the line end the train comes in at and turns the line so the train runs the same way as before.
-        static Portal PrepareArrival(PendingArrival arr)
+        static Portal PrepareArrival(PendingArrival arrival)
         {
-            Portal entry = s_Portals.Find(p => p.To == arr.FromScene);
+            Portal entry = s_Portals.Find(portal => portal.To == arrival.FromScene);
             if (entry == null)
             {
                 // no transition back on the line: the line end nearest to where the game put the player
                 var player = GameManager.GetPlayerObject();
                 Vector3 pp = player != null ? player.transform.position : Vector3.zero;
                 float best = float.MaxValue;
-                foreach (var t in s_Tracks)
+                foreach (var track in s_Tracks)
                 {
-                    float d0 = Vector3.Distance(t.Path[0], pp), d1 = Vector3.Distance(t.Path[t.Path.Count - 1], pp);
-                    if (d0 < best) { best = d0; entry = new Portal { Track = t, S = 0f, AtEnd = false, To = arr.FromScene }; }
-                    if (d1 < best) { best = d1; entry = new Portal { Track = t, S = t.Spline.Length, AtEnd = true, To = arr.FromScene }; }
+                    float d0 = Vector3.Distance(track.Path[0], pp), d1 = Vector3.Distance(track.Path[track.Path.Count - 1], pp);
+                    if (d0 < best) { best = d0; entry = new Portal { Track = track, S = 0f, AtEnd = false, To = arrival.FromScene }; }
+                    if (d1 < best) { best = d1; entry = new Portal { Track = track, S = track.Spline.Length, AtEnd = true, To = arrival.FromScene }; }
                 }
             }
             if (entry == null) return null;
@@ -745,192 +760,192 @@ namespace SteamRailway
             return entry;
         }
 
-        static void Arrive(PendingArrival arr, Portal entry, Material mat)
+        static void Arrive(PendingArrival arrival, Portal entry, Material material)
         {
             s_Save.Arrival = null;
-            if (entry == null) { ArrivalFailed(arr); return; }
-            var st = arr.Train;
-            float len = entry.Track.Spline.Length;
+            if (entry == null) { ArrivalFailed(arrival); return; }
+            var trainState = arrival.Train;
+            float length = entry.Track.Spline.Length;
             // the exit point of the transition: clear of its trigger, so the train does not run straight back
-            float pos = entry.Ls != null || entry.Custom ? entry.Safe : (entry.AtEnd ? len - 25f : 25f);
-            st.RouteId = entry.Track.Id;
-            st.SplinePos = Mathf.Clamp(pos, 1f, len - 1f);
+            float position = entry.Ls != null || entry.Custom ? entry.Safe : (entry.AtEnd ? length - 25f : 25f);
+            trainState.RouteId = entry.Track.Id;
+            trainState.SplinePos = Mathf.Clamp(position, 1f, length - 1f);
             // The train moves into the region: along the line + at its start, - at its end. It keeps running the
             // way it ran before (chimney first or bunker first), so it stands on the line facing accordingly.
             int inward = entry.AtEnd ? -1 : 1;
-            int run = arr.Forward ? 1 : -1;
-            if (st.Sim == null) st.Sim = new SimState();
-            st.Sim.Facing = inward * run;
-            float velocity = run * arr.Speed;
-            st.Velocity = velocity;             // it comes in running, as it left
-            Spawn(st, mat);
-            var live = s_Trains.Find(x => x.Guid == st.Guid);
+            int run = arrival.Forward ? 1 : -1;
+            if (trainState.Sim == null) trainState.Sim = new SimState();
+            trainState.Sim.Facing = inward * run;
+            float velocity = run * arrival.Speed;
+            trainState.Velocity = velocity;             // it comes in running, as it left
+            Spawn(trainState, material);
+            var live = s_Trains.Find(liveTrain => liveTrain.Guid == trainState.Guid);
             if (live != null) MelonCoroutines.Start(BoardAfterArrival(live, velocity));
-            SteamRailwayMod.Log.Msg($"Train {st.Guid} arrived in {s_Scene} from {arr.FromScene}.");
+            SteamRailwayMod.Log.Msg($"Train {trainState.Guid} arrived in {s_Scene} from {arrival.FromScene}.");
         }
 
         /// The game puts the player at the region's entry point while the screen is still black, then fades in.
         /// The train runs on meanwhile; the player is put aboard the moment they have been placed (they jump
         /// there, or the fade-in starts), so the fade opens on the cab of a moving train.
-        static IEnumerator BoardAfterArrival(LiveTrain t, float velocity)
+        static IEnumerator BoardAfterArrival(LiveTrain liveTrain, float velocity)
         {
-            t.Boarding = true;
+            liveTrain.Boarding = true;
             try
             {
-                var e = BoardAfterArrivalInner(t, velocity);
+                var e = BoardAfterArrivalInner(liveTrain, velocity);
                 while (e.MoveNext()) yield return e.Current;
             }
-            finally { t.Boarding = false; t.AwaySince = -1f; t.Reboards = 0; }
+            finally { liveTrain.Boarding = false; liveTrain.AwaySince = -1f; liveTrain.Reboards = 0; }
         }
 
-        static IEnumerator BoardAfterArrivalInner(LiveTrain t, float velocity)
+        static IEnumerator BoardAfterArrivalInner(LiveTrain liveTrain, float velocity)
         {
             float start = Time.realtimeSinceStartup;
-            var p0 = GameManager.GetPlayerObject();
-            Vector3 last = p0 != null ? p0.transform.position : Vector3.zero;
+            var sourceObject = GameManager.GetPlayerObject();
+            Vector3 last = sourceObject != null ? sourceObject.transform.position : Vector3.zero;
             float still = 0f;
             while (Time.realtimeSinceStartup - start < 10f)
             {
                 yield return null;
-                if (t.Train == null) yield break;
+                if (liveTrain.Train == null) yield break;
                 var player = GameManager.GetPlayerObject();
                 if (player == null) continue;
-                var p = player.transform.position;
-                bool jumped = (p - last).sqrMagnitude > 4f;
-                still = (p - last).sqrMagnitude < 0.0025f ? still + Time.unscaledDeltaTime : 0f;
-                last = p;
+                var point = player.transform.position;
+                bool jumped = (point - last).sqrMagnitude > 4f;
+                still = (point - last).sqrMagnitude < 0.0025f ? still + Time.unscaledDeltaTime : 0f;
+                last = point;
                 bool fadingIn = false;
                 try { fadingIn = !CameraFade.IsFadedOut || CameraFade.IsFadingIn; } catch { }
                 if (jumped || (fadingIn && Time.realtimeSinceStartup - start > 0.2f) || still > 1.5f) break;
             }
 
-            for (int attempt = 0; attempt < 4 && t.Train != null; attempt++)
+            for (int attempt = 0; attempt < 4 && liveTrain.Train != null; attempt++)
             {
                 try
                 {
-                    SteamTrain.s_TrackedSteamTrain = t.Train;
-                    if (!t.Train.IsInsideTrain) t.Train.EnterSteamTrain();
-                    t.Train.FinishEnteringSteamTrainAfterFadeOut();
+                    SteamTrain.s_TrackedSteamTrain = liveTrain.Train;
+                    if (!liveTrain.Train.IsInsideTrain) liveTrain.Train.EnterSteamTrain();
+                    liveTrain.Train.FinishEnteringSteamTrainAfterFadeOut();
                     // EnterSteamTrain starts a fade whose end clears this; during a region load that fade never
                     // ends, and while it is set the game does not carry the player with the cab (they fall through)
-                    t.Train.m_PendingEnterTrain = false;
+                    liveTrain.Train.m_PendingEnterTrain = false;
                 }
                 catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Boarding the arrived train failed: {e.Message}"); }
-                for (int k = 0; k < 6; k++) yield return null;
-                if (t.Train == null || PlayerInCab(t.Train)) break;
+                for (int deepIndex = 0; deepIndex < 6; deepIndex++) yield return null;
+                if (liveTrain.Train == null || PlayerInCab(liveTrain.Train)) break;
                 SteamRailwayMod.Log.Warning($"Player not in the cab after boarding (attempt {attempt + 1}); trying again.");
             }
-            if (t.Train == null) yield break;
+            if (liveTrain.Train == null) yield break;
             // the game may still move the player to the entry point a moment later: put them back aboard
             float watch = Time.realtimeSinceStartup;
             int reboards = 0;
-            while (Time.realtimeSinceStartup - watch < 4f && t.Train != null && reboards < 3)
+            while (Time.realtimeSinceStartup - watch < 4f && liveTrain.Train != null && reboards < 3)
             {
                 yield return null;
-                if (t.Train == null || PlayerInCab(t.Train)) continue;
+                if (liveTrain.Train == null || PlayerInCab(liveTrain.Train)) continue;
                 reboards++;
                 try
                 {
-                    SteamTrain.s_TrackedSteamTrain = t.Train;
-                    if (!t.Train.IsInsideTrain) t.Train.EnterSteamTrain();
-                    t.Train.FinishEnteringSteamTrainAfterFadeOut();
+                    SteamTrain.s_TrackedSteamTrain = liveTrain.Train;
+                    if (!liveTrain.Train.IsInsideTrain) liveTrain.Train.EnterSteamTrain();
+                    liveTrain.Train.FinishEnteringSteamTrainAfterFadeOut();
                     // clear the pending-enter flag here as well (see above)
-                    t.Train.m_PendingEnterTrain = false;
+                    liveTrain.Train.m_PendingEnterTrain = false;
                 }
                 catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Boarding the arrived train again failed: {e.Message}"); }
-                for (int k = 0; k < 6; k++) yield return null;
+                for (int deepIndex = 0; deepIndex < 6; deepIndex++) yield return null;
             }
-            if (t.Train == null) yield break;
+            if (liveTrain.Train == null) yield break;
             // nobody aboard after all: the train must not run off on its own
-            if (!PlayerInCab(t.Train)) t.Sim.RestoreMotion(0f);
+            if (!PlayerInCab(liveTrain.Train)) liveTrain.Sim.RestoreMotion(0f);
         }
 
         /// The game believes the player is in the cab (train controls, no walking) but they are standing somewhere
         /// else: after a region change the game may move the player once more after the train took them aboard.
         /// Take them aboard again; if that keeps failing, let them out properly and stop the train.
-        static void GuardCab(LiveTrain t)
+        static void GuardCab(LiveTrain liveTrain)
         {
-            var tr = t.Train;
-            if (tr == null || t.Sim == null || t.Boarding || s_Transiting || !tr.IsInsideTrain) { t.AwaySince = -1f; return; }
+            var train = liveTrain.Train;
+            if (train == null || liveTrain.Sim == null || liveTrain.Boarding || s_Transiting || !train.IsInsideTrain) { liveTrain.AwaySince = -1f; return; }
             bool fading = false;
             try { fading = CameraFade.IsFadingIn || CameraFade.IsFadingOut || CameraFade.IsFadedOut; } catch { }
             // aboard but still "about to board" with no fade running: the game would never carry the player along
-            if (!fading && tr.m_PendingEnterTrain)
+            if (!fading && train.m_PendingEnterTrain)
             {
                 SteamRailwayMod.Log.Warning("Boarding was left pending: finishing it.");
-                tr.m_PendingEnterTrain = false;
-                tr.FinishEnteringSteamTrainAfterFadeOut();
+                train.m_PendingEnterTrain = false;
+                train.FinishEnteringSteamTrainAfterFadeOut();
             }
-            if (fading || PlayerInCab(tr)) { t.AwaySince = -1f; if (PlayerInCab(tr)) t.Reboards = 0; return; }
+            if (fading || PlayerInCab(train)) { liveTrain.AwaySince = -1f; if (PlayerInCab(train)) liveTrain.Reboards = 0; return; }
             float now = Time.realtimeSinceStartup;
-            if (t.AwaySince < 0f) { t.AwaySince = now; return; }
-            if (now - t.AwaySince < 1.2f) return;
-            t.AwaySince = now;
+            if (liveTrain.AwaySince < 0f) { liveTrain.AwaySince = now; return; }
+            if (now - liveTrain.AwaySince < 1.2f) return;
+            liveTrain.AwaySince = now;
             var player = GameManager.GetPlayerObject();
             string where = player != null ? player.transform.position.ToString("F1") : "?";
-            if (t.Reboards < 3)
+            if (liveTrain.Reboards < 3)
             {
-                t.Reboards++;
-                SteamRailwayMod.Log.Warning($"Player at {where} is not in the cab at {tr.m_CameraDummy.position:F1} while aboard: taking them aboard again ({t.Reboards}).");
-                SteamTrain.s_TrackedSteamTrain = tr;
-                tr.FinishEnteringSteamTrainAfterFadeOut();
-                tr.m_PendingEnterTrain = false;
+                liveTrain.Reboards++;
+                SteamRailwayMod.Log.Warning($"Player at {where} is not in the cab at {train.m_CameraDummy.position:F1} while aboard: taking them aboard again ({liveTrain.Reboards}).");
+                SteamTrain.s_TrackedSteamTrain = train;
+                train.FinishEnteringSteamTrainAfterFadeOut();
+                train.m_PendingEnterTrain = false;
                 return;
             }
             SteamRailwayMod.Log.Warning($"Player at {where} could not be put back into the cab: leaving the train and stopping it.");
-            t.Sim.S.Regulator = 0f;
-            t.Sim.RestoreMotion(0f);
+            liveTrain.Sim.S.Regulator = 0f;
+            liveTrain.Sim.RestoreMotion(0f);
             try
             {
-                tr.ExitSteamTrain(tr.transform.Find("ExitPoint"));
-                tr.FinishExitingSteamTrainAfterFadeOut();
+                train.ExitSteamTrain(train.transform.Find("ExitPoint"));
+                train.FinishExitingSteamTrainAfterFadeOut();
             }
             catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Leaving the train failed: {e.Message}"); }
-            var pm = GameManager.GetPlayerManagerComponent();
-            if (pm != null && pm.GetControlMode() == PlayerControlMode.InSteamTrain) pm.SetControlMode(PlayerControlMode.Normal);
-            t.Reboards = 0;
-            t.AwaySince = -1f;
+            var playerManager = GameManager.GetPlayerManagerComponent();
+            if (playerManager != null && playerManager.GetControlMode() == PlayerControlMode.InSteamTrain) playerManager.SetControlMode(PlayerControlMode.Normal);
+            liveTrain.Reboards = 0;
+            liveTrain.AwaySince = -1f;
         }
 
         static bool PlayerInCab(SteamTrain train)
         {
             var player = GameManager.GetPlayerObject();
             if (player == null || train.m_CameraDummy == null) return false;
-            var d = player.transform.position - train.m_CameraDummy.position;
-            return new Vector2(d.x, d.z).magnitude < 2f && Mathf.Abs(d.y) < 3f;
+            var direction = player.transform.position - train.m_CameraDummy.position;
+            return new Vector2(direction.x, direction.z).magnitude < 2f && Mathf.Abs(direction.y) < 3f;
         }
 
         /// The next region has no railway: the train stays behind, stopped before the transition.
-        static void ArrivalFailed(PendingArrival arr)
+        static void ArrivalFailed(PendingArrival arrival)
         {
             s_Save.Arrival = null;
-            var st = arr.Train;
-            st.RouteId = arr.FallbackRouteId;
-            st.SplinePos = Mathf.Max(1f, arr.FallbackPos);
-            st.Velocity = 0f;
-            if (!s_Save.Scenes.TryGetValue(arr.FromScene, out var list)) { list = new List<TrainState>(); s_Save.Scenes[arr.FromScene] = list; }
-            list.Add(st);
+            var trainState = arrival.Train;
+            trainState.RouteId = arrival.FallbackRouteId;
+            trainState.SplinePos = Mathf.Max(1f, arrival.FallbackPos);
+            trainState.Velocity = 0f;
+            if (!s_Save.Scenes.TryGetValue(arrival.FromScene, out var list)) { list = new List<TrainState>(); s_Save.Scenes[arrival.FromScene] = list; }
+            list.Add(trainState);
             CabControls.Message(L.T("Bu bölgede ray yok; tren geride, geçişin önünde kaldı.",
                                     "There is no railway in this region; the train stayed behind at the transition."));
-            SteamRailwayMod.Log.Msg($"{s_Scene} has no railway; train {st.Guid} waits in {arr.FromScene}.");
+            SteamRailwayMod.Log.Msg($"{s_Scene} has no railway; train {trainState.Guid} waits in {arrival.FromScene}.");
         }
 
         /// Destroys and rebuilds everything in the current scene (route editor).
         /// Where each train stood before a rebuild (its line may have changed shape or name).
         static readonly Dictionary<string, Vector3> s_Remap = new Dictionary<string, Vector3>();
 
-        static void Remap(TrainState st)
+        static void Remap(TrainState trainState)
         {
-            if (!s_Remap.TryGetValue(st.Guid, out var p) || s_Tracks.Count == 0) return;
-            BuiltTrack best = null; float bd = float.MaxValue, bs = 0f;
-            foreach (var t in s_Tracks)
+            if (!s_Remap.TryGetValue(trainState.Guid, out var point) || s_Tracks.Count == 0) return;
+            BuiltTrack best = null; float bestDistance = float.MaxValue, bestArc = 0f;
+            foreach (var track in s_Tracks)
             {
-                float s = t.Path.NearestDistance(p, out float d);
-                if (d < bd) { bd = d; best = t; bs = s; }
+                float arcLength = track.Path.NearestDistance(point, out float distance);
+                if (distance < bestDistance) { bestDistance = distance; best = track; bestArc = arcLength; }
             }
-            if (best == null || bd > 10f) return;
-            st.RouteId = best.Id;
-            st.SplinePos = bs * best.Spline.Length / Mathf.Max(1f, best.Path.Length);
+            if (best == null || bestDistance > 10f) return;
+            trainState.RouteId = best.Id;
+            trainState.SplinePos = bestArc * best.Spline.Length / Mathf.Max(1f, best.Path.Length);
         }
 
         /// Rebuilds the region's railway for the editors (not while the player rides a train).
@@ -950,9 +965,9 @@ namespace SteamRailway
             }
             CaptureStates();
             s_Remap.Clear();
-            foreach (var t in s_Trains) if (t.Train != null) s_Remap[t.Guid] = t.Train.transform.position;
-            foreach (var t in s_Trains) if (t.Train != null) Object.Destroy(t.Train.gameObject);
-            foreach (var t in s_Tracks) if (t.Root != null) Object.Destroy(t.Root);
+            foreach (var liveTrain in s_Trains) if (liveTrain.Train != null) s_Remap[liveTrain.Guid] = liveTrain.Train.transform.position;
+            foreach (var liveTrain in s_Trains) if (liveTrain.Train != null) Object.Destroy(liveTrain.Train.gameObject);
+            foreach (var track in s_Tracks) if (track.Root != null) Object.Destroy(track.Root);
             s_Portals.Clear();
             Switches.Clear();
             s_Trains.Clear();
@@ -969,7 +984,7 @@ namespace SteamRailway
 
         // ---------------------------------------------------------------- trains
 
-        static void Spawn(TrainState state, Material mat)
+        static void Spawn(TrainState state, Material material)
         {
             var track = s_Tracks.Find(t => t.Id == state.RouteId) ?? s_Tracks[0];
             // a train left standing in a transition trigger (older versions) would carry the player off again
@@ -979,21 +994,21 @@ namespace SteamRailway
                 SteamRailwayMod.Log.Msg($"Train {state.Guid} stood in a region transition; moved to {clear:F0} m.");
                 state.SplinePos = clear;
             }
-            var train = TrainBuilder.Build(state.Guid, track.Spline, state.SplinePos, mat);
-            var sim = new SteamSim(train, state.Sim);
-            sim.Fire = train.m_Boiler != null ? train.m_Boiler.m_InvisibleFire : null;
+            var train = TrainBuilder.Build(state.Guid, track.Spline, state.SplinePos, material);
+            var simulation = new SteamSim(train, state.Sim);
+            simulation.Fire = train.m_Boiler != null ? train.m_Boiler.m_InvisibleFire : null;
             var stoveT = train.transform.Find("Firebox");
-            sim.Stove = stoveT != null ? stoveT.GetComponent<WoodStove>() : null;
-            sim.RestoreMotion(state.Velocity);
-            sim.Animator = LocomotiveAnimator.TryCreate(train.transform);
-            sim.Audio = new TrainAudio(train);
-            sim.Smoke = CreateSmoke(train);
-            s_Sims[state.Guid] = sim;
+            simulation.Stove = stoveT != null ? stoveT.GetComponent<WoodStove>() : null;
+            simulation.RestoreMotion(state.Velocity);
+            simulation.Animator = LocomotiveAnimator.TryCreate(train.transform);
+            simulation.Audio = new TrainAudio(train);
+            simulation.Smoke = CreateSmoke(train);
+            s_Sims[state.Guid] = simulation;
             CabControls.ApplyRealism(train);
             s_OurGuids.Add(state.Guid);
-            s_Trains.Add(new LiveTrain { Train = train, Guid = state.Guid, RouteId = track.Id, Sim = sim });
+            s_Trains.Add(new LiveTrain { Train = train, Guid = state.Guid, RouteId = track.Id, Sim = simulation });
             if (!string.IsNullOrEmpty(state.TrainData) || !string.IsNullOrEmpty(state.FireData) || (state.CabItems != null && state.CabItems.Count > 0))
-                MelonCoroutines.Start(RestoreNextFrame(train, sim, state));
+                MelonCoroutines.Start(RestoreNextFrame(train, simulation, state));
         }
 
         /// Chimney smoke from the bundle on the game's lit particle material (taken from the firebox stove's fire);
@@ -1003,20 +1018,20 @@ namespace SteamRailway
             try
             {
                 var old = train.transform.Find("ChimneySmoke");
-                Vector3 pos = old != null ? old.localPosition : TrainConfig.ChimneyTop;
+                Vector3 position = old != null ? old.localPosition : TrainConfig.ChimneyTop;
                 Material lit = null;
                 var stove = train.transform.Find("Firebox");
                 if (stove != null)
-                    foreach (var r in stove.GetComponentsInChildren<ParticleSystemRenderer>(true))
+                    foreach (var particleRenderer in stove.GetComponentsInChildren<ParticleSystemRenderer>(true))
                     {
-                        var m = r.sharedMaterial;
-                        if (m != null && m.name.StartsWith("FX_SmokeA") && m.shader != null && m.shader.name.Contains("VertexLit")) { lit = m; break; }
+                        var material = particleRenderer.sharedMaterial;
+                        if (material != null && material.name.StartsWith("FX_SmokeA") && material.shader != null && material.shader.name.Contains("VertexLit")) { lit = material; break; }
                     }
-                var smoke = LocoSmoke.Create(train.transform, pos, lit);
+                var smoke = LocoSmoke.Create(train.transform, position, lit);
                 if (smoke != null && old != null)
                 {
-                    var or = old.GetComponent<ParticleSystemRenderer>();
-                    if (or != null) or.enabled = false;
+                    var particleRenderer = old.GetComponent<ParticleSystemRenderer>();
+                    if (particleRenderer != null) particleRenderer.enabled = false;
                 }
                 return smoke;
             }
@@ -1027,7 +1042,7 @@ namespace SteamRailway
             }
         }
 
-        static IEnumerator RestoreNextFrame(SteamTrain train, SteamSim sim, TrainState state)
+        static IEnumerator RestoreNextFrame(SteamTrain train, SteamSim simulation, TrainState state)
         {
             yield return null;
             if (train == null) yield break;
@@ -1038,8 +1053,8 @@ namespace SteamRailway
                     train.DeserializeTrainCarData(state.TrainData);
                     train.DeserializeTrainCarDataPostSceneLoad();
                 }
-                if (!string.IsNullOrEmpty(state.FireData) && sim.Fire != null)
-                    sim.Fire.Deserialize(state.FireData);
+                if (!string.IsNullOrEmpty(state.FireData) && simulation.Fire != null)
+                    simulation.Fire.Deserialize(state.FireData);
             }
             catch (System.Exception e)
             {
@@ -1062,50 +1077,52 @@ namespace SteamRailway
             if (s_Scene == null || s_Trains.Count == 0) return;
             Patches.CabPlace_ControlMode.Update();
             BoilerExplosion.Update();
-            for (int i = 0; i < s_Trains.Count; i++) PassJunctions(s_Trains[i]);
-            for (int i = 0; i < s_Trains.Count; i++)
-                if (s_Trains[i].Train != null)
+            for (int index = 0; index < s_Trains.Count; index++) PassJunctions(s_Trains[index]);
+            for (int index = 0; index < s_Trains.Count; index++)
+                if (s_Trains[index].Train != null)
                 {
-                    try { CabItems.Update(s_Trains[i].Train.transform); }
+                    try { CabItems.Update(s_Trains[index].Train.transform); }
                     catch (System.Exception e) { SteamRailwayMod.Debug($"Cab items: {e.Message}"); }
+                    try { CabCarry.Update(s_Trains[index].Train); }
+                    catch (System.Exception e) { SteamRailwayMod.Debug($"Cab carry: {e.Message}"); }
                 }
             if (!s_Transiting)
-                for (int i = 0; i < s_Trains.Count; i++) CheckPortals(s_Trains[i]);
-            for (int i = 0; i < s_Trains.Count; i++)
+                for (int index = 0; index < s_Trains.Count; index++) CheckPortals(s_Trains[index]);
+            for (int index = 0; index < s_Trains.Count; index++)
             {
-                try { GuardCab(s_Trains[i]); }
+                try { GuardCab(s_Trains[index]); }
                 catch (System.Exception e) { SteamRailwayMod.Debug($"Cab guard: {e.Message}"); }
             }
             if (Time.time >= s_NextHover)
             {
                 s_NextHover = Time.time + 0.2f;
-                foreach (var t in s_Trains)
+                foreach (var liveTrain in s_Trains)
                 {
-                    if (t.Train == null || t.Sim == null) continue;
-                    CabControls.UpdateHoverTexts(t.Sim);
-                    CabControls.UpdateEffects(t.Sim);
+                    if (liveTrain.Train == null || liveTrain.Sim == null) continue;
+                    CabControls.UpdateHoverTexts(liveTrain.Sim);
+                    CabControls.UpdateEffects(liveTrain.Sim);
                 }
             }
             if (Time.time < s_NextCapture) return;
             s_NextCapture = Time.time + CaptureInterval;
             CaptureStates();
-            foreach (var t in s_Trains) KeepExitPointOnGround(t.Train);
+            foreach (var liveTrain in s_Trains) KeepExitPointOnGround(liveTrain.Train);
         }
 
-        static void PassJunctions(LiveTrain t)
+        static void PassJunctions(LiveTrain liveTrain)
         {
-            if (t.Train == null || t.Sim == null) return;
-            float pos = t.Train.m_SplineController.Position;
-            float prev = t.PrevPos;
-            t.PrevPos = pos;
+            if (liveTrain.Train == null || liveTrain.Sim == null) return;
+            float position = liveTrain.Train.m_SplineController.Position;
+            float prev = liveTrain.PrevPos;
+            liveTrain.PrevPos = position;
             if (float.IsNaN(prev) || Switches.All.Count == 0) return;
-            var line = s_Tracks.Find(x => x.Id == t.RouteId);
+            var line = s_Tracks.Find(track => track.Id == liveTrain.RouteId);
             if (line == null) return;
-            var moved = Switches.Pass(t, line, prev, pos);
-            if (moved != null) t.PrevPos = t.Train.m_SplineController.Position;
+            var moved = Switches.Pass(liveTrain, line, prev, position);
+            if (moved != null) liveTrain.PrevPos = liveTrain.Train.m_SplineController.Position;
         }
 
-        public static void SaveSwitch(string id, bool diverging) => s_Save.Switches[id] = diverging;
+        public static void SaveSwitch(string identifier, bool diverging) => s_Save.Switches[identifier] = diverging;
 
         static void KeepExitPointOnGround(SteamTrain train)
         {
@@ -1122,26 +1139,26 @@ namespace SteamRailway
         {
             if (s_Scene == null || s_Trains.Count == 0) return;
             var list = new List<TrainState>();
-            foreach (var t in s_Trains)
+            foreach (var liveTrain in s_Trains)
             {
-                if (t.Train == null) continue;
+                if (liveTrain.Train == null) continue;
                 try
                 {
                     list.Add(new TrainState
                     {
-                        Guid = t.Guid,
-                        RouteId = t.RouteId,
-                        SplinePos = t.Train.m_SplineController.Position,
-                        TrainData = t.Train.SerializeTrainCarData(),
-                        FireData = t.Sim != null && t.Sim.Fire != null ? t.Sim.Fire.Serialize() : null,
-                        Sim = t.Sim != null ? t.Sim.S : null,
-                        Velocity = t.Sim != null ? t.Sim.Velocity : 0f,
-                        CabItems = CabItems.Capture(t.Train.transform),
+                        Guid = liveTrain.Guid,
+                        RouteId = liveTrain.RouteId,
+                        SplinePos = liveTrain.Train.m_SplineController.Position,
+                        TrainData = liveTrain.Train.SerializeTrainCarData(),
+                        FireData = liveTrain.Sim != null && liveTrain.Sim.Fire != null ? liveTrain.Sim.Fire.Serialize() : null,
+                        Sim = liveTrain.Sim != null ? liveTrain.Sim.S : null,
+                        Velocity = liveTrain.Sim != null ? liveTrain.Sim.Velocity : 0f,
+                        CabItems = CabItems.Capture(liveTrain.Train.transform),
                     });
                 }
                 catch (System.Exception e)
                 {
-                    SteamRailwayMod.Debug($"Capture of {t.Guid} failed: {e.Message}");
+                    SteamRailwayMod.Debug($"Capture of {liveTrain.Guid} failed: {e.Message}");
                 }
             }
             if (list.Count > 0) s_Save.Scenes[s_Scene] = list;
@@ -1163,21 +1180,21 @@ namespace SteamRailway
         static void KeepOneTrain()
         {
             int total = s_Save.Arrival != null ? 1 : 0;
-            foreach (var kv in s_Save.Scenes) total += kv.Value != null ? kv.Value.Count : 0;
+            foreach (var pair in s_Save.Scenes) total += pair.Value != null ? pair.Value.Count : 0;
             if (total <= 1) return;
             string keepScene = null;
             if (s_Save.Arrival == null)
             {
-                foreach (var v in s_Save.Visited)
-                    if (s_Save.Scenes.TryGetValue(v, out var l) && l != null && l.Count > 0) { keepScene = v; break; }
+                foreach (var value in s_Save.Visited)
+                    if (s_Save.Scenes.TryGetValue(value, out var points) && points != null && points.Count > 0) { keepScene = value; break; }
                 if (keepScene == null)
-                    foreach (var kv in s_Save.Scenes) if (kv.Value != null && kv.Value.Count > 0) { keepScene = kv.Key; break; }
+                    foreach (var pair in s_Save.Scenes) if (pair.Value != null && pair.Value.Count > 0) { keepScene = pair.Key; break; }
             }
-            foreach (var kv in s_Save.Scenes)
+            foreach (var pair in s_Save.Scenes)
             {
-                if (kv.Value == null) continue;
-                if (kv.Key == keepScene && kv.Value.Count > 1) kv.Value.RemoveRange(1, kv.Value.Count - 1);
-                else if (kv.Key != keepScene) kv.Value.Clear();
+                if (pair.Value == null) continue;
+                if (pair.Key == keepScene && pair.Value.Count > 1) pair.Value.RemoveRange(1, pair.Value.Count - 1);
+                else if (pair.Key != keepScene) pair.Value.Clear();
             }
             SteamRailwayMod.Log.Msg($"{total - 1} extra locomotive(s) removed; one per game is kept" + (keepScene != null ? $" (in {keepScene})." : " (the arriving one)."));
         }
@@ -1187,6 +1204,14 @@ namespace SteamRailway
         {
             s_NewGame = true;
             s_NeedLoad = true;
+            SteamRailwayMod.Debug("A new save name was generated.");
+        }
+
+        static bool StoredDataBelongsTo(string json, string slot)
+        {
+            if (string.IsNullOrEmpty(json) || string.IsNullOrEmpty(slot)) return false;
+            try { return JsonSerializer.Deserialize<RailwaySave>(json, s_Json)?.Slot == slot; }
+            catch { return false; }
         }
 
         static void LoadSave()
@@ -1195,7 +1220,12 @@ namespace SteamRailway
             try { slot = SaveGameSystem.GetCurrentSaveName(); } catch { }
             try
             {
-                string json = s_NewGame ? null : s_ModData.Load();
+                string json = s_ModData.Load();
+                // A new game starts from nothing, unless this very slot already holds railway data of its own
+                // (the new-name call can also come while an existing game is being entered).
+                bool isNewGame = s_NewGame && !StoredDataBelongsTo(json, slot);
+                if (isNewGame) json = null;
+                SteamRailwayMod.Log.Msg($"Railway data of {slot}: newGame={isNewGame}, stored={(string.IsNullOrEmpty(json) ? 0 : json.Length)} chars.");
                 s_Save = string.IsNullOrEmpty(json) ? new RailwaySave() : JsonSerializer.Deserialize<RailwaySave>(json, s_Json) ?? new RailwaySave();
             }
             catch (System.Exception e)
@@ -1210,7 +1240,7 @@ namespace SteamRailway
             }
             if (!string.IsNullOrEmpty(slot)) s_Save.Slot = slot;
             // saves from before TrainCreated existed: a train anywhere means it was created
-            foreach (var kv in s_Save.Scenes) if (kv.Value != null && kv.Value.Count > 0) s_Save.TrainCreated = true;
+            foreach (var pair in s_Save.Scenes) if (pair.Value != null && pair.Value.Count > 0) s_Save.TrainCreated = true;
             if (s_Save.Arrival != null) s_Save.TrainCreated = true;
             KeepOneTrain();
             s_OurGuids.Clear();
@@ -1225,12 +1255,12 @@ namespace SteamRailway
         {
             if (s_TrackMaterial != null) return s_TrackMaterial;
             Material fallback = null;
-            foreach (var mr in Object.FindObjectsOfType<MeshRenderer>())
+            foreach (var meshRenderer in Object.FindObjectsOfType<MeshRenderer>())
             {
-                var m = mr.sharedMaterial;
-                if (m == null) continue;
-                if (mr.name.StartsWith("OBJ_RailTrack")) { s_TrackMaterial = m; return m; }
-                if (fallback == null && m.shader != null && m.shader.name.Contains("TLD_StandardDiffuse")) fallback = m;
+                var material = meshRenderer.sharedMaterial;
+                if (material == null) continue;
+                if (meshRenderer.name.StartsWith("OBJ_RailTrack")) { s_TrackMaterial = material; return material; }
+                if (fallback == null && material.shader != null && material.shader.name.Contains("TLD_StandardDiffuse")) fallback = material;
             }
             return fallback;
         }

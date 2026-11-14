@@ -40,8 +40,51 @@ namespace SteamRailway
             s_Realism = s_Cat.CreateEntry("Realism", "Medium", "Realism",
                 "Simple: automatic boiler feed, regulator/reverser/brake only. Medium: injector and blower by hand, boiler failures.");
 
+            ExtractDefaults();
             RouteStore.Load();
+            WriteSoundCredits();
             Log.Msg($"SteamRailway loaded. Routes file: {RouteStore.FilePath}");
+        }
+
+        /// The lines, tunnels, terrain and object edits the mod ships with are carried inside the DLL. Files that are
+        /// missing from the mod's folder are written there on start; files that exist (hand edits) are never replaced.
+        static void ExtractDefaults()
+        {
+            try
+            {
+                var assembly = typeof(SteamRailwayMod).Assembly;
+                int written = 0;
+                foreach (var name in assembly.GetManifestResourceNames())
+                {
+                    string relativePath = name.Replace('\\', '/');
+                    if (!relativePath.StartsWith("Data/")) continue;
+                    string target = System.IO.Path.Combine(RouteStore.FolderPath, relativePath.Substring("Data/".Length).Replace('/', System.IO.Path.DirectorySeparatorChar));
+                    if (System.IO.File.Exists(target)) continue;
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(target));
+                    using (var stream = assembly.GetManifestResourceStream(name))
+                    using (var file = System.IO.File.Create(target)) stream.CopyTo(file);
+                    written++;
+                }
+                if (written > 0) Log.Msg($"{written} default data file(s) written to {RouteStore.FolderPath}.");
+            }
+            catch (System.Exception e) { Log.Warning($"Default data could not be written: {e.Message}"); }
+        }
+
+        /// The sound recordings are CC BY 4.0: their credits travel inside the DLL and are written next to the mod's data.
+        static void WriteSoundCredits()
+        {
+            try
+            {
+                string path = System.IO.Path.Combine(RouteStore.FolderPath, "SOUND_CREDITS.txt");
+                if (System.IO.File.Exists(path)) return;
+                System.IO.Directory.CreateDirectory(RouteStore.FolderPath);
+                using (var stream = typeof(SteamRailwayMod).Assembly.GetManifestResourceStream("SOUND_CREDITS.txt"))
+                {
+                    if (stream == null) return;
+                    using (var file = System.IO.File.Create(path)) stream.CopyTo(file);
+                }
+            }
+            catch (System.Exception e) { Log.Warning($"Sound credits could not be written: {e.Message}"); }
         }
 
         public override void OnSceneWasInitialized(int buildIndex, string sceneName)
@@ -74,9 +117,9 @@ namespace SteamRailway
             if (Enabled && ObjectEditorEnabled) EditorHub.OnGUI();
         }
 
-        internal static void Debug(string msg)
+        internal static void Debug(string message)
         {
-            if (Verbose) Log.Msg(msg);
+            if (Verbose) Log.Msg(message);
         }
     }
 }

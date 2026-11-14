@@ -63,110 +63,110 @@ namespace SteamRailway
         /// The region's tunnels (again after a rebuild).
         public static void ApplyScene(string scene)
         {
-            foreach (var g in s_Live) if (g != null) Object.Destroy(g);
+            foreach (var targetObject in s_Live) if (targetObject != null) Object.Destroy(targetObject);
             s_Live.Clear();
-            var f = For(scene);
+            var tunnelFile = For(scene);
             int made = 0;
-            foreach (var d in f.Tunnels)
+            foreach (var tunnel in tunnelFile.Tunnels)
             {
-                try { if (Spawn(d) != null) made++; }
-                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Tunnel {d.Source}: {e.Message}"); }
+                try { if (Spawn(tunnel) != null) made++; }
+                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Tunnel {tunnel.Source}: {e.Message}"); }
             }
-            if (f.Tunnels.Count > 0) SteamRailwayMod.Log.Msg($"{scene}: {made} of {f.Tunnels.Count} tunnel(s) placed.");
+            if (tunnelFile.Tunnels.Count > 0) SteamRailwayMod.Log.Msg($"{scene}: {made} of {tunnelFile.Tunnels.Count} tunnel(s) placed.");
         }
 
         /// A train tunnel the region has (one with a train light absorber first).
         static Transform PickSource()
         {
             Transform best = null; int bestScore = 0;
-            foreach (var t in Resources.FindObjectsOfTypeAll<Transform>())
+            foreach (var transform in Resources.FindObjectsOfTypeAll<Transform>())
             {
-                if (t.gameObject.scene.name == null || t.name.StartsWith("SR_")) continue;
-                if (!t.name.StartsWith("STR_Tunnel") || !t.name.Contains("_Prefab")) continue;
+                if (transform.gameObject.scene.name == null || transform.name.StartsWith("SR_")) continue;
+                if (!transform.name.StartsWith("STR_Tunnel") || !transform.name.Contains("_Prefab")) continue;
                 int score = 1;
-                foreach (var c in t.GetComponentsInChildren<Transform>(true))
-                    if (c.name.Contains("TrainTunnel") || c.name.StartsWith("OBJ_RailTrack")) { score = 2; break; }
-                if (score > bestScore) { best = t; bestScore = score; }
+                foreach (var child in transform.GetComponentsInChildren<Transform>(true))
+                    if (child.name.Contains("TrainTunnel") || child.name.StartsWith("OBJ_RailTrack")) { score = 2; break; }
+                if (score > bestScore) { best = transform; bestScore = score; }
             }
             return best;
         }
 
-        static Transform FindSource(TunnelData d)
+        static Transform FindSource(TunnelData tunnel)
         {
-            Transform best = null; float bd = float.MaxValue;
-            var want = CustomLines.V(d.SourcePos);
-            foreach (var t in Resources.FindObjectsOfTypeAll<Transform>())
+            Transform best = null; float bestDistance = float.MaxValue;
+            var want = CustomLines.V(tunnel.SourcePos);
+            foreach (var transform in Resources.FindObjectsOfTypeAll<Transform>())
             {
-                if (t.gameObject.scene.name == null || t.name != d.Source) continue;
-                float dd = d.SourcePos != null ? (t.position - want).sqrMagnitude : 0f;
-                if (dd < bd) { bd = dd; best = t; }
+                if (transform.gameObject.scene.name == null || transform.name != tunnel.Source) continue;
+                float deltaDistance = tunnel.SourcePos != null ? (transform.position - want).sqrMagnitude : 0f;
+                if (deltaDistance < bestDistance) { bestDistance = deltaDistance; best = transform; }
             }
             return best;
         }
 
         static Material s_Dark;
 
-        static GameObject Spawn(TunnelData d)
+        static GameObject Spawn(TunnelData tunnel)
         {
-            var src = FindSource(d);
-            if (src == null) { SteamRailwayMod.Log.Warning($"Tunnel model {d.Source} is not in this region."); return null; }
-            var go = Object.Instantiate(src.gameObject);
-            go.name = "SR_Tunnel_" + d.Source;
-            go.transform.SetPositionAndRotation(CustomLines.V(d.Pos), d.Rot != null && d.Rot.Length >= 4 ? new Quaternion(d.Rot[0], d.Rot[1], d.Rot[2], d.Rot[3]) : Quaternion.identity);
+            var source = FindSource(tunnel);
+            if (source == null) { SteamRailwayMod.Log.Warning($"Tunnel model {tunnel.Source} is not in this region."); return null; }
+            var targetObject = Object.Instantiate(source.gameObject);
+            targetObject.name = "SR_Tunnel_" + tunnel.Source;
+            targetObject.transform.SetPositionAndRotation(CustomLines.V(tunnel.Pos), tunnel.Rot != null && tunnel.Rot.Length >= 4 ? new Quaternion(tunnel.Rot[0], tunnel.Rot[1], tunnel.Rot[2], tunnel.Rot[3]) : Quaternion.identity);
             // the line's own rails run through it; no region transitions copied along
-            foreach (var c in go.GetComponentsInChildren<Transform>(true))
-                if (c.name.StartsWith("OBJ_RailTrack")) c.gameObject.SetActive(false);
-            foreach (var ls in go.GetComponentsInChildren<Il2Cpp.LoadScene>(true)) ls.gameObject.SetActive(false);
+            foreach (var child in targetObject.GetComponentsInChildren<Transform>(true))
+                if (child.name.StartsWith("OBJ_RailTrack")) child.gameObject.SetActive(false);
+            foreach (var loadScene in targetObject.GetComponentsInChildren<Il2Cpp.LoadScene>(true)) loadScene.gameObject.SetActive(false);
             // dark just inside the opening (the ground or rocks may fill the inside)
-            if (s_Dark == null) foreach (var m in Resources.FindObjectsOfTypeAll<Material>()) if (m.name == "GLB_Black_A01") { s_Dark = m; break; }
+            if (s_Dark == null) foreach (var material in Resources.FindObjectsOfTypeAll<Material>()) if (material.name == "GLB_Black_A01") { s_Dark = material; break; }
             var plug = GameObject.CreatePrimitive(PrimitiveType.Cube);
             plug.name = "SR_TunnelDark";
-            var col = plug.GetComponent<Collider>();
-            if (col != null) Object.Destroy(col);
-            plug.transform.SetParent(go.transform, false);
+            var collider = plug.GetComponent<Collider>();
+            if (collider != null) Object.Destroy(collider);
+            plug.transform.SetParent(targetObject.transform, false);
             plug.transform.localPosition = new Vector3(0f, 4f, 1.5f);
             plug.transform.localScale = new Vector3(9f, 9f, 0.3f);
-            var mr = plug.GetComponent<MeshRenderer>();
-            if (s_Dark != null) mr.sharedMaterial = s_Dark;
-            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            s_Live.Add(go);
-            return go;
+            var meshRenderer = plug.GetComponent<MeshRenderer>();
+            if (s_Dark != null) meshRenderer.sharedMaterial = s_Dark;
+            meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            s_Live.Add(targetObject);
+            return targetObject;
         }
 
         /// Puts a tunnel mouth on a line at path metres s; the tunnel runs on along the line away from `viewer`.
-        public static string PlaceAt(string scene, BuiltTrack t, float s, Vector3 viewer)
+        public static string PlaceAt(string scene, BuiltTrack track, float arcLength, Vector3 viewer)
         {
-            var src = PickSource();
-            if (src == null) return L.T("Bu bölgede kopyalanacak bir tünel modeli yok.", "This region has no tunnel model to copy.");
-            t.Path.Sample(s, out var p, out var tan);
-            tan.y = 0f; tan.Normalize();
-            var inward = Vector3.Dot(tan, p - viewer) >= 0f ? tan : -tan;
-            var rot = Quaternion.LookRotation(-inward, Vector3.up);
-            var right = rot * Vector3.right;
+            var source = PickSource();
+            if (source == null) return L.T("Bu bölgede kopyalanacak bir tünel modeli yok.", "This region has no tunnel model to copy.");
+            track.Path.Sample(arcLength, out var point, out var tangent);
+            tangent.y = 0f; tangent.Normalize();
+            var inward = Vector3.Dot(tangent, point - viewer) >= 0f ? tangent : -tangent;
+            var rotation = Quaternion.LookRotation(-inward, Vector3.up);
+            var right = rotation * Vector3.right;
             // the model's rails: centre at x -0.025, rail top 0.402 above its origin; the mouth MouthDepth in front
-            t.Path.Sample(Mathf.Clamp(s + Vector3.Dot(inward, tan) * MouthDepth, 0f, t.Path.Length), out var inner, out _);
+            track.Path.Sample(Mathf.Clamp(arcLength + Vector3.Dot(inward, tangent) * MouthDepth, 0f, track.Path.Length), out var inner, out _);
             var origin = inner - (right * RailPieces.CentreX + Vector3.up * RailPieces.RailTop);
-            var d = new TunnelData { Source = src.name, SourcePos = CustomLines.F(src.position), Pos = CustomLines.F(origin),
-                                     Rot = new[] { rot.x, rot.y, rot.z, rot.w } };
-            For(scene).Tunnels.Add(d);
+            var tunnel = new TunnelData { Source = source.name, SourcePos = CustomLines.F(source.position), Pos = CustomLines.F(origin),
+                                     Rot = new[] { rotation.x, rotation.y, rotation.z, rotation.w } };
+            For(scene).Tunnels.Add(tunnel);
             Save();
-            Spawn(d);
-            return L.T($"Tünel yerleştirildi ({src.name}).", $"Tunnel placed ({src.name}).");
+            Spawn(tunnel);
+            return L.T($"Tünel yerleştirildi ({source.name}).", $"Tunnel placed ({source.name}).");
         }
 
         /// Removes the placed tunnel nearest to p (within r metres).
-        public static bool RemoveNear(string scene, Vector3 p, float r)
+        public static bool RemoveNear(string scene, Vector3 point, float radius)
         {
-            var f = For(scene);
-            TunnelData best = null; float bd = r * r;
-            foreach (var d in f.Tunnels)
+            var tunnelFile = For(scene);
+            TunnelData best = null; float bestDistance = radius * radius;
+            foreach (var tunnel in tunnelFile.Tunnels)
             {
-                var q = CustomLines.V(d.Pos);
-                float dx = q.x - p.x, dz = q.z - p.z, dd = dx * dx + dz * dz;
-                if (dd < bd) { bd = dd; best = d; }
+                var otherPoint = CustomLines.V(tunnel.Pos);
+                float deltaX = otherPoint.x - point.x, deltaZ = otherPoint.z - point.z, deltaDistance = deltaX * deltaX + deltaZ * deltaZ;
+                if (deltaDistance < bestDistance) { bestDistance = deltaDistance; best = tunnel; }
             }
             if (best == null) return false;
-            f.Tunnels.Remove(best);
+            tunnelFile.Tunnels.Remove(best);
             Save();
             ApplyScene(scene);
             return true;

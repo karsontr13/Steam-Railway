@@ -26,17 +26,17 @@ namespace SteamRailway
             }
 
             float best = float.PositiveInfinity;
-            foreach (var h in s_Holes)
+            foreach (var fishingHole in s_Holes)
             {
-                if (h == null || !h.m_IsUserPlaced || h.NormalizedFrozen > MaxFrozen) continue;
-                best = Mathf.Min(best, Vector3.Distance(pos, h.transform.position));
+                if (fishingHole == null || !fishingHole.m_IsUserPlaced || fishingHole.NormalizedFrozen > MaxFrozen) continue;
+                best = Mathf.Min(best, Vector3.Distance(pos, fishingHole.transform.position));
             }
-            foreach (var f in s_Flowing)
+            foreach (var flowingWater in s_Flowing)
             {
-                if (f == null) continue;
-                var col = f.GetComponent<Collider>();
-                var p = col != null ? col.ClosestPoint(pos) : f.transform.position;
-                best = Mathf.Min(best, Vector3.Distance(pos, p));
+                if (flowingWater == null) continue;
+                var collider = flowingWater.GetComponent<Collider>();
+                var point = collider != null ? collider.ClosestPoint(pos) : flowingWater.transform.position;
+                best = Mathf.Min(best, Vector3.Distance(pos, point));
             }
             return best;
         }

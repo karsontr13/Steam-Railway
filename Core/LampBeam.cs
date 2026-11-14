@@ -24,14 +24,14 @@ namespace SteamRailway
                 int baseIdx = verts.Count;
                 for (int r = 0; r <= Rings; r++)
                 {
-                    float t = r / (float)Rings;
-                    float z = Length * t;
-                    float rad = Mathf.Lerp(LensRadius, endR, t);
-                    float fade = bright * Mathf.Pow(1f - t, 2.2f) * Mathf.Clamp01(t * 12f);   // not a solid disc at the lens
+                    float fraction = r / (float)Rings;
+                    float z = Length * fraction;
+                    float radius = Mathf.Lerp(LensRadius, endR, fraction);
+                    float fade = bright * Mathf.Pow(1f - fraction, 2.2f) * Mathf.Clamp01(fraction * 12f);   // not a solid disc at the lens
                     for (int s = 0; s < Sides; s++)
                     {
-                        float a = Mathf.PI * 2f * s / Sides;
-                        verts.Add(new Vector3(Mathf.Cos(a) * rad, Mathf.Sin(a) * rad, z));
+                        float firstValue = Mathf.PI * 2f * s / Sides;
+                        verts.Add(new Vector3(Mathf.Cos(firstValue) * radius, Mathf.Sin(firstValue) * radius, z));
                         cols.Add(new Color(fade, fade, fade, fade));
                     }
                 }
@@ -44,13 +44,13 @@ namespace SteamRailway
                         tris.AddRange(new[] { a0, b0, a1, a1, b0, b1, a0, a1, b0, a1, b1, b0 });
                     }
             }
-            var m = new Mesh { name = "SR_LampBeam" };
-            m.vertices = verts.ToArray();
-            m.colors = cols.ToArray();
-            m.triangles = tris.ToArray();
-            m.RecalculateBounds();
-            m.hideFlags |= HideFlags.DontUnloadUnusedAsset;
-            return m;
+            var mesh = new Mesh { name = "SR_LampBeam" };
+            mesh.vertices = verts.ToArray();
+            mesh.colors = cols.ToArray();
+            mesh.triangles = tris.ToArray();
+            mesh.RecalculateBounds();
+            mesh.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            return mesh;
         }
 
         /// Adds a beam under `lamp` (its +Z is the light's direction); null when no additive shader exists.
@@ -59,20 +59,20 @@ namespace SteamRailway
             if (s_Shader == null) s_Shader = Shader.Find("Particles/Additive");
             if (s_Shader == null) return null;
             if (s_Mesh == null) s_Mesh = BuildMesh();
-            var go = new GameObject("Beam");
-            go.transform.SetParent(lamp, false);
-            go.transform.localPosition = new Vector3(0f, 0f, 0.05f);
-            go.AddComponent<MeshFilter>().sharedMesh = s_Mesh;
-            var r = go.AddComponent<MeshRenderer>();
-            var mat = new Material(s_Shader) { name = "SR_LampBeam" };
-            mat.mainTexture = Texture2D.whiteTexture;
-            mat.SetColor("_TintColor", Color.black);
-            mat.renderQueue = 3000;
-            r.sharedMaterial = mat;
-            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            r.receiveShadows = false;
-            r.enabled = false;
-            return r;
+            var targetObject = new GameObject("Beam");
+            targetObject.transform.SetParent(lamp, false);
+            targetObject.transform.localPosition = new Vector3(0f, 0f, 0.05f);
+            targetObject.AddComponent<MeshFilter>().sharedMesh = s_Mesh;
+            var meshRenderer = targetObject.AddComponent<MeshRenderer>();
+            var material = new Material(s_Shader) { name = "SR_LampBeam" };
+            material.mainTexture = Texture2D.whiteTexture;
+            material.SetColor("_TintColor", Color.black);
+            material.renderQueue = 3000;
+            meshRenderer.sharedMaterial = material;
+            meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            meshRenderer.receiveShadows = false;
+            meshRenderer.enabled = false;
+            return meshRenderer;
         }
 
         static float s_Dark, s_NextDark;
@@ -84,10 +84,10 @@ namespace SteamRailway
             s_NextDark = Time.time + 2f;
             try
             {
-                var tod = Il2Cpp.GameManager.GetTimeOfDayComponent();
-                if (tod == null) return s_Dark = 1f;
-                float h = tod.GetNormalizedTime() * 24f;
-                float dusk = Mathf.InverseLerp(17f, 20f, h), dawn = Mathf.InverseLerp(8f, 5f, h);
+                var timeOfDay = Il2Cpp.GameManager.GetTimeOfDayComponent();
+                if (timeOfDay == null) return s_Dark = 1f;
+                float height = timeOfDay.GetNormalizedTime() * 24f;
+                float dusk = Mathf.InverseLerp(17f, 20f, height), dawn = Mathf.InverseLerp(8f, 5f, height);
                 s_Dark = Mathf.SmoothStep(0f, 1f, Mathf.Max(dusk, dawn));
             }
             catch { s_Dark = 1f; }
@@ -95,12 +95,12 @@ namespace SteamRailway
         }
 
         /// k = 0 (off) .. 1 (full).
-        public static void Set(MeshRenderer beam, float k)
+        public static void Set(MeshRenderer beam, float scale)
         {
             if (beam == null) return;
-            k *= Darkness();
-            beam.enabled = k > 0.01f;
-            if (beam.enabled) beam.sharedMaterial.SetColor("_TintColor", Tint * k);
+            scale *= Darkness();
+            beam.enabled = scale > 0.01f;
+            if (beam.enabled) beam.sharedMaterial.SetColor("_TintColor", Tint * scale);
         }
     }
 }

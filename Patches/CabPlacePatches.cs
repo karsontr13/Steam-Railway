@@ -27,11 +27,11 @@ namespace SteamRailway.Patches
                                                  "AttemptToPlaceMesh", "AttemptToPlaceObject", "PlaceMeshInWorld",
                                                  "InteractiveObjectsProcessAltFire" } },   // right click on an item to move it
             };
-            foreach (var kv in names)
-                foreach (var m in kv.Key.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static))
-                    if (m.DeclaringType == kv.Key && !m.IsGenericMethod
-                        && kv.Value.Any(n => n.EndsWith("*") ? m.Name.StartsWith(n.TrimEnd('*')) : m.Name == n))
-                        yield return m;
+            foreach (var pair in names)
+                foreach (var method in pair.Key.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static))
+                    if (method.DeclaringType == pair.Key && !method.IsGenericMethod
+                        && pair.Value.Any(name => name.EndsWith("*") ? method.Name.StartsWith(name.TrimEnd('*')) : method.Name == name))
+                        yield return method;
         }
 
         static int s_Depth;
@@ -40,9 +40,9 @@ namespace SteamRailway.Patches
         private static void Prefix(out bool __state)
         {
             __state = false;
-            var t = SteamTrain.ActiveSteamTrain;
-            if (s_Depth == 0 && (t == null || !RailwayManager.IsOurTrain(t))) return;
-            if (s_Depth == 0) { s_Hidden = t; SteamTrain.ActiveSteamTrain = null; }
+            var train = SteamTrain.ActiveSteamTrain;
+            if (s_Depth == 0 && (train == null || !RailwayManager.IsOurTrain(train))) return;
+            if (s_Depth == 0) { s_Hidden = train; SteamTrain.ActiveSteamTrain = null; }
             s_Depth++;
             __state = true;
         }
@@ -52,7 +52,11 @@ namespace SteamRailway.Patches
             if (!__state) return;
             if (--s_Depth == 0)
             {
-                if (s_Hidden != null) SteamTrain.ActiveSteamTrain = s_Hidden;
+                if (s_Hidden != null)
+                {
+                    SteamTrain.ActiveSteamTrain = s_Hidden;
+                    try { CabItems.ScanNow(s_Hidden.transform); } catch { }
+                }
                 s_Hidden = null;
             }
         }
@@ -80,24 +84,44 @@ namespace SteamRailway.Patches
         }
     }
 
+    /// The placement aims with a ray against the colliders. The cab's colliders move with the train but the physics
+    /// scene only catches up at the next physics step, so at speed the ray hits where the cab was and the item hangs
+    /// behind the train until it is put down. Bringing the colliders up to date first keeps it in the cab.
+    [HarmonyPatch(typeof(PlayerManager), nameof(PlayerManager.UpdatePlaceMesh))]
+    internal static class CabPlace_SyncColliders
+    {
+        private static void Prefix()
+        {
+            var train = CabPlace_HideTrain.Current;
+            if (train != null && RailwayManager.IsOurTrain(train)) Physics.SyncTransforms();
+        }
+
+        private static void Postfix(PlayerManager __instance)
+        {
+            var train = CabPlace_HideTrain.Current;
+            if (train == null || !RailwayManager.IsOurTrain(train)) return;
+            CabItems.RememberPlacement(train.transform, __instance.m_ObjectToPlace);
+        }
+    }
+
     /// Placing needs the player's normal control mode; in the train it is InSteamTrain. While a placement starts in
     /// our cab the mode is switched to Normal, and back to InSteamTrain once the placement is over (CabPlace.Update).
     [HarmonyPatch]
     internal static class CabPlace_ControlMode
     {
         static IEnumerable<MethodBase> TargetMethods() =>
-            typeof(PlayerManager).GetMethods().Where(m => m.DeclaringType == typeof(PlayerManager) && m.Name == "StartPlaceMesh");
+            typeof(PlayerManager).GetMethods().Where(method => method.DeclaringType == typeof(PlayerManager) && method.Name == "StartPlaceMesh");
 
         static bool s_Restore;
 
         private static void Prefix(out bool __state)
         {
             __state = false;
-            var pm = GameManager.GetPlayerManagerComponent();
+            var playerManager = GameManager.GetPlayerManagerComponent();
             var train = CabPlace_HideTrain.Current;
-            if (pm == null || train == null || !RailwayManager.IsOurTrain(train)) return;
-            if (pm.GetControlMode() != PlayerControlMode.InSteamTrain) return;
-            pm.SetControlMode(PlayerControlMode.Normal);
+            if (playerManager == null || train == null || !RailwayManager.IsOurTrain(train)) return;
+            if (playerManager.GetControlMode() != PlayerControlMode.InSteamTrain) return;
+            playerManager.SetControlMode(PlayerControlMode.Normal);
             __state = true;
         }
 
@@ -112,13 +136,13 @@ namespace SteamRailway.Patches
         public static void Update()
         {
             if (!s_Restore) return;
-            var pm = GameManager.GetPlayerManagerComponent();
-            if (pm == null) { s_Restore = false; return; }
-            if (pm.IsInMeshPlacementMode()) return;
+            var playerManager = GameManager.GetPlayerManagerComponent();
+            if (playerManager == null) { s_Restore = false; return; }
+            if (playerManager.IsInMeshPlacementMode()) return;
             s_Restore = false;
             var train = SteamTrain.ActiveSteamTrain;
-            if (train != null && RailwayManager.IsOurTrain(train) && pm.GetControlMode() == PlayerControlMode.Normal)
-                pm.SetControlMode(PlayerControlMode.InSteamTrain);
+            if (train != null && RailwayManager.IsOurTrain(train) && playerManager.GetControlMode() == PlayerControlMode.Normal)
+                playerManager.SetControlMode(PlayerControlMode.InSteamTrain);
         }
     }
 }

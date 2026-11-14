@@ -12,8 +12,8 @@ namespace SteamRailway.Patches
         {
             get
             {
-                var t = CabPlace_HideTrain.Current;
-                return t != null && RailwayManager.IsOurTrain(t);
+                var train = CabPlace_HideTrain.Current;
+                return train != null && RailwayManager.IsOurTrain(train);
             }
         }
     }

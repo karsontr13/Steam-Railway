@@ -55,47 +55,47 @@ namespace SteamRailway
         /// The art name the instancing batches use: "OBJ_RailTrackStraitA_Prefab (3)" -> "OBJ_RailTrackStraitA".
         public static string Prefix(string name)
         {
-            int i = name.IndexOf("_Prefab", System.StringComparison.Ordinal);
-            if (i > 0) return name.Substring(0, i);
-            i = name.IndexOf(" (", System.StringComparison.Ordinal);
-            return i > 0 ? name.Substring(0, i) : name;
+            int index = name.IndexOf("_Prefab", System.StringComparison.Ordinal);
+            if (index > 0) return name.Substring(0, index);
+            index = name.IndexOf(" (", System.StringComparison.Ordinal);
+            return index > 0 ? name.Substring(0, index) : name;
         }
 
-        static Target Get(string prefix, Vector3 pos)
+        static Target Get(string prefix, Vector3 position)
         {
-            foreach (var t in s_Targets) if (t.Prefix == prefix && (t.Pos - pos).sqrMagnitude < 0.01f) return t;
+            foreach (var target in s_Targets) if (target.Prefix == prefix && (target.Pos - position).sqrMagnitude < 0.01f) return target;
             return null;
         }
 
         /// Hides an object drawn by instancing (its transform carries no renderer).
-        public static void Add(Transform obj)
+        public static void Add(Transform objectTransform)
         {
-            if (obj == null) return;
-            Set(Prefix(obj.name), obj.position, false, Matrix4x4.identity);
+            if (objectTransform == null) return;
+            Set(Prefix(objectTransform.name), objectTransform.position, false, Matrix4x4.identity);
         }
 
         /// Hides (moved = false) or moves an object; origPos = where the region placed it.
         public static void Set(string prefix, Vector3 origPos, bool moved, Matrix4x4 delta)
         {
-            var t = Get(prefix, origPos);
-            if (t == null) { t = new Target { Prefix = prefix, Pos = origPos }; s_Targets.Add(t); }
-            t.Moved = moved;
-            t.Delta = delta;
-            if (t.Matched) WriteTarget(t);
+            var target = Get(prefix, origPos);
+            if (target == null) { target = new Target { Prefix = prefix, Pos = origPos }; s_Targets.Add(target); }
+            target.Moved = moved;
+            target.Delta = delta;
+            if (target.Matched) WriteTarget(target);
         }
 
         /// Puts an object back as the region made it.
         public static void Remove(string prefix, Vector3 origPos)
         {
-            var t = Get(prefix, origPos);
-            if (t == null) return;
-            s_Targets.Remove(t);
-            foreach (var h in s_Hits)
+            var target = Get(prefix, origPos);
+            if (target == null) return;
+            s_Targets.Remove(target);
+            foreach (var hit in s_Hits)
             {
-                if (h.T != t) continue;
-                try { WriteOne(h, h.Orig); RestoreCulling(h); } catch { }
+                if (hit.T != target) continue;
+                try { WriteOne(hit, hit.Orig); RestoreCulling(hit); } catch { }
             }
-            s_Hits.RemoveAll(h => h.T == t);
+            s_Hits.RemoveAll(hit => hit.T == target);
         }
 
         public static bool Has(string prefix, Vector3 origPos) => Get(prefix, origPos) != null;
@@ -109,16 +109,16 @@ namespace SteamRailway
                 var list = RenderObjectInstance.s_RenderObjectInstanceList;
                 if (list == null) return;
                 bool any = false;
-                foreach (var t in s_Targets) if (!t.Matched) { any = true; break; }
-                foreach (var roi in list)
+                foreach (var target in s_Targets) if (!target.Matched) { any = true; break; }
+                foreach (var instance in list)
                 {
-                    if (roi == null) continue;
-                    var b = roi.m_Batches;
-                    if (b == null || !b.IsAllocated()) continue;
-                    if (any) found += Find(b);
-                    s_Done[roi.Pointer] = b.Pointer;
+                    if (instance == null) continue;
+                    var batches = instance.m_Batches;
+                    if (batches == null || !batches.IsAllocated()) continue;
+                    if (any) found += Find(batches);
+                    s_Done[instance.Pointer] = batches.Pointer;
                 }
-                foreach (var t in s_Targets) if (!t.Matched) t.Matched = true;   // searched: absent here
+                foreach (var target in s_Targets) if (!target.Matched) target.Matched = true;   // searched: absent here
                 WriteAll();
             }
             catch (System.Exception e)
@@ -137,35 +137,35 @@ namespace SteamRailway
             if (mats == null) return 0;
             int batches = Mathf.Min(names.Count, b.GetBatchCount());
             int found = 0;
-            for (int i = 0; i < batches; i++)
+            for (int index = 0; index < batches; index++)
             {
-                string name = names[i];
+                string name = names[index];
                 if (name == null) continue;
                 List<Target> mine = null;
-                foreach (var t in s_Targets)
-                    if (!t.Matched && name.StartsWith(t.Prefix + "_", System.StringComparison.Ordinal)) (mine ??= new List<Target>()).Add(t);
+                foreach (var target in s_Targets)
+                    if (!target.Matched && name.StartsWith(target.Prefix + "_", System.StringComparison.Ordinal)) (mine ??= new List<Target>()).Add(target);
                 if (mine == null) continue;
-                int start = b.m_Batches.m_StartIndexes[i];
-                int count = b.m_Batches.m_ObjectCounts[i];
+                int start = b.m_Batches.m_StartIndexes[index];
+                int count = b.m_Batches.m_ObjectCounts[index];
                 if (count <= 0 || start < 0 || start + count > mats.count) continue;
                 Mesh batchMesh = null;
-                try { var ri = b.m_Batches.m_RenderInfos[i]; if (ri != null) batchMesh = ri.m_Mesh; } catch { }
+                try { var renderInfo = b.m_Batches.m_RenderInfos[index]; if (renderInfo != null) batchMesh = renderInfo.m_Mesh; } catch { }
                 var arr = new Il2CppStructArray<Matrix4x4>(count);
                 mats.InternalGetData(new Il2CppSystem.Array(arr.Pointer), 0, start, count, 64);
-                for (int k = 0; k < count; k++)
+                for (int deepIndex = 0; deepIndex < count; deepIndex++)
                 {
-                    var m = arr[k];
-                    if (m.m33 == 0f) continue;
-                    var pos = new Vector3(m.m03, m.m13, m.m23);
-                    foreach (var t in mine)
+                    var matrix = arr[deepIndex];
+                    if (matrix.m33 == 0f) continue;
+                    var position = new Vector3(matrix.m03, matrix.m13, matrix.m23);
+                    foreach (var target in mine)
                     {
                         // the most detailed level may sit off the object's own point (seen: 1 m aside, 2.4 m up)
-                        var dd = t.Pos - pos;
-                        if (dd.x * dd.x + dd.z * dd.z > MatchDist * MatchDist * 2.25f || Mathf.Abs(dd.y) > 3f) continue;
-                        int idx = start + k;
+                        var directionDelta = target.Pos - position;
+                        if (directionDelta.x * directionDelta.x + directionDelta.z * directionDelta.z > MatchDist * MatchDist * 2.25f || Mathf.Abs(directionDelta.y) > 3f) continue;
+                        int idx = start + deepIndex;
                         s_Hits.Add(new Hit
                         {
-                            T = t, B = b, Batches = b.Pointer, Mats = mats, Invs = invs, Index = idx, Orig = m,
+                            T = target, B = b, Batches = b.Pointer, Mats = mats, Invs = invs, Index = idx, Orig = matrix,
                             OrigPos = b.m_Objects.m_Positions[idx], OrigBounds = b.m_Objects.m_Bounds[idx],
                             Name = name, Mesh = batchMesh,
                         });
@@ -177,40 +177,40 @@ namespace SteamRailway
             return found;
         }
 
-        static void WriteOne(Hit h, Matrix4x4 m)
+        static void WriteOne(Hit hit, Matrix4x4 matrix)
         {
             if (s_One == null) { s_One = new Il2CppStructArray<Matrix4x4>(1); s_OneArr = new Il2CppSystem.Array(s_One.Pointer); }
-            s_One[0] = m;
-            h.Mats.InternalSetData(s_OneArr, 0, h.Index, 1, 64);
-            if (h.Invs != null)
+            s_One[0] = matrix;
+            hit.Mats.InternalSetData(s_OneArr, 0, hit.Index, 1, 64);
+            if (hit.Invs != null)
             {
-                s_One[0] = m.m33 == 0f ? m : m.inverse;
-                h.Invs.InternalSetData(s_OneArr, 0, h.Index, 1, 64);
+                s_One[0] = matrix.m33 == 0f ? matrix : matrix.inverse;
+                hit.Invs.InternalSetData(s_OneArr, 0, hit.Index, 1, 64);
             }
         }
 
-        static void WriteHit(Hit h)
+        static void WriteHit(Hit hit)
         {
-            if (h.Mats == null) return;
-            if (!h.T.Moved) { WriteOne(h, new Matrix4x4()); return; }   // all zero: nothing is drawn
-            WriteOne(h, h.T.Delta * h.Orig);
+            if (hit.Mats == null) return;
+            if (!hit.T.Moved) { WriteOne(hit, new Matrix4x4()); return; }   // all zero: nothing is drawn
+            WriteOne(hit, hit.T.Delta * hit.Orig);
             // the game culls by these: the object must be drawn where it stands now
-            var p = h.T.Delta.MultiplyPoint3x4(new Vector3(h.OrigPos.x, h.OrigPos.y, h.OrigPos.z));
-            h.B.m_Objects.m_Positions[h.Index] = new Unity.Mathematics.float4(p.x, p.y, p.z, h.OrigPos.w);
-            var bo = h.OrigBounds;
-            bo.center = h.T.Delta.MultiplyPoint3x4(bo.center);
-            h.B.m_Objects.m_Bounds[h.Index] = bo;
+            var point = hit.T.Delta.MultiplyPoint3x4(new Vector3(hit.OrigPos.x, hit.OrigPos.y, hit.OrigPos.z));
+            hit.B.m_Objects.m_Positions[hit.Index] = new Unity.Mathematics.float4(point.x, point.y, point.z, hit.OrigPos.w);
+            var otherBounds = hit.OrigBounds;
+            otherBounds.center = hit.T.Delta.MultiplyPoint3x4(otherBounds.center);
+            hit.B.m_Objects.m_Bounds[hit.Index] = otherBounds;
         }
 
-        static void RestoreCulling(Hit h)
+        static void RestoreCulling(Hit hit)
         {
-            h.B.m_Objects.m_Positions[h.Index] = h.OrigPos;
-            h.B.m_Objects.m_Bounds[h.Index] = h.OrigBounds;
+            hit.B.m_Objects.m_Positions[hit.Index] = hit.OrigPos;
+            hit.B.m_Objects.m_Bounds[hit.Index] = hit.OrigBounds;
         }
 
-        static void WriteTarget(Target t)
+        static void WriteTarget(Target target)
         {
-            foreach (var h in s_Hits) if (h.T == t) { try { WriteHit(h); } catch { } }
+            foreach (var hit in s_Hits) if (hit.T == target) { try { WriteHit(hit); } catch { } }
         }
 
         static Il2CppSystem.Array s_Zeros;
@@ -220,27 +220,27 @@ namespace SteamRailway
         static void WriteAll()
         {
             var hidden = new List<Hit>();
-            foreach (var h in s_Hits)
+            foreach (var hit in s_Hits)
             {
-                if (h.Mats == null) continue;
-                if (h.T.Moved) WriteHit(h); else hidden.Add(h);
+                if (hit.Mats == null) continue;
+                if (hit.T.Moved) WriteHit(hit); else hidden.Add(hit);
             }
             if (hidden.Count == 0) return;
-            hidden.Sort((x, y) => x.Mats.Pointer != y.Mats.Pointer ? x.Mats.Pointer.ToInt64().CompareTo(y.Mats.Pointer.ToInt64()) : x.Index.CompareTo(y.Index));
-            int i = 0;
-            while (i < hidden.Count)
+            hidden.Sort((hit, otherHit) => hit.Mats.Pointer != otherHit.Mats.Pointer ? hit.Mats.Pointer.ToInt64().CompareTo(otherHit.Mats.Pointer.ToInt64()) : hit.Index.CompareTo(otherHit.Index));
+            int index = 0;
+            while (index < hidden.Count)
             {
-                int j = i;
-                while (j + 1 < hidden.Count && hidden[j + 1].Mats.Pointer == hidden[i].Mats.Pointer && hidden[j + 1].Index == hidden[j].Index + 1) j++;
-                int n = j - i + 1;
-                if (s_Zeros == null || s_ZeroLen < n)
+                int innerIndex = index;
+                while (innerIndex + 1 < hidden.Count && hidden[innerIndex + 1].Mats.Pointer == hidden[index].Mats.Pointer && hidden[innerIndex + 1].Index == hidden[innerIndex].Index + 1) innerIndex++;
+                int count = innerIndex - index + 1;
+                if (s_Zeros == null || s_ZeroLen < count)
                 {
-                    s_ZeroLen = Mathf.Max(n, 64);
+                    s_ZeroLen = Mathf.Max(count, 64);
                     s_Zeros = new Il2CppSystem.Array(new Il2CppStructArray<Matrix4x4>(s_ZeroLen).Pointer);
                 }
-                hidden[i].Mats.InternalSetData(s_Zeros, 0, hidden[i].Index, n, 64);
-                if (hidden[i].Invs != null) hidden[i].Invs.InternalSetData(s_Zeros, 0, hidden[i].Index, n, 64);
-                i = j + 1;
+                hidden[index].Mats.InternalSetData(s_Zeros, 0, hidden[index].Index, count, 64);
+                if (hidden[index].Invs != null) hidden[index].Invs.InternalSetData(s_Zeros, 0, hidden[index].Index, count, 64);
+                index = innerIndex + 1;
             }
         }
 
@@ -274,82 +274,82 @@ namespace SteamRailway
             var list = RenderObjectInstance.s_RenderObjectInstanceList;
             if (list == null) return;
             bool same = s_Cands.Count > 0;
-            foreach (var roi in list)
+            foreach (var instance in list)
             {
-                if (roi == null || roi.m_Batches == null || !roi.m_Batches.IsAllocated()) continue;
-                if (!s_CandDone.TryGetValue(roi.Pointer, out var bp) || bp != roi.m_Batches.Pointer) same = false;
+                if (instance == null || instance.m_Batches == null || !instance.m_Batches.IsAllocated()) continue;
+                if (!s_CandDone.TryGetValue(instance.Pointer, out var bp) || bp != instance.m_Batches.Pointer) same = false;
             }
             if (same) return;
             s_Cands.Clear(); s_CandDone.Clear(); s_MatCache.Clear();
-            foreach (var roi in list)
+            foreach (var instance in list)
             {
-                if (roi == null) continue;
-                var b = roi.m_Batches;
+                if (instance == null) continue;
+                var b = instance.m_Batches;
                 if (b == null || !b.IsAllocated() || b.m_Names == null) continue;
-                var po = b.m_Objects;
-                var mats = po.m_InstancedMatrices;
+                var perObject = b.m_Objects;
+                var mats = perObject.m_InstancedMatrices;
                 if (mats == null) continue;
                 int batches = Mathf.Min(b.m_Names.Count, b.GetBatchCount());
-                for (int i = 0; i < batches; i++)
+                for (int index = 0; index < batches; index++)
                 {
-                    string nm = b.m_Names[i];
-                    if (nm == null || !IsLod0(nm)) continue;
+                    string name = b.m_Names[index];
+                    if (name == null || !IsLod0(name)) continue;
                     Mesh mesh = null;
-                    try { var ri = b.m_Batches.m_RenderInfos[i]; if (ri != null) mesh = ri.m_Mesh; } catch { }
+                    try { var renderInfo = b.m_Batches.m_RenderInfos[index]; if (renderInfo != null) mesh = renderInfo.m_Mesh; } catch { }
                     if (mesh == null) continue;
-                    int st = b.m_Batches.m_StartIndexes[i], n = b.m_Batches.m_ObjectCounts[i];
-                    for (int k = 0; k < n; k++)
-                        s_Cands.Add(new Cand { Mats = mats, Index = st + k, B = po.m_Bounds[st + k], Name = nm, Mesh = mesh });
+                    int st = b.m_Batches.m_StartIndexes[index], count = b.m_Batches.m_ObjectCounts[index];
+                    for (int deepIndex = 0; deepIndex < count; deepIndex++)
+                        s_Cands.Add(new Cand { Mats = mats, Index = st + deepIndex, B = perObject.m_Bounds[st + deepIndex], Name = name, Mesh = mesh });
                 }
-                s_CandDone[roi.Pointer] = b.Pointer;
+                s_CandDone[instance.Pointer] = b.Pointer;
             }
         }
 
         static Hit FindHit(ComputeBuffer mats, int index)
         {
-            foreach (var h in s_Hits) if (h.Index == index && h.Mats != null && h.Mats.Pointer == mats.Pointer) return h;
+            foreach (var hit in s_Hits) if (hit.Index == index && hit.Mats != null && hit.Mats.Pointer == mats.Pointer) return hit;
             return null;
         }
 
         static Matrix4x4 ReadMatrix(ComputeBuffer mats, int index)
         {
             var key = (mats.Pointer.ToInt64(), index);
-            if (s_MatCache.TryGetValue(key, out var m)) return m;
+            if (s_MatCache.TryGetValue(key, out var matrix)) return matrix;
             if (s_One == null) { s_One = new Il2CppStructArray<Matrix4x4>(1); s_OneArr = new Il2CppSystem.Array(s_One.Pointer); }
             mats.InternalGetData(s_OneArr, 0, index, 1, 64);
-            m = s_One[0];
-            s_MatCache[key] = m;
-            return m;
+            matrix = s_One[0];
+            s_MatCache[key] = matrix;
+            return matrix;
         }
 
         static Tris TrisOf(Mesh mesh)
         {
-            int id = mesh.GetInstanceID();
-            if (s_Tris.TryGetValue(id, out var t)) return t;
+            int identifier = mesh.GetInstanceID();
+            if (s_Tris.TryGetValue(identifier, out var t)) return t;
             if (mesh.isReadable) t = new Tris { V = mesh.vertices, T = mesh.triangles };
-            s_Tris[id] = t;
+            s_Tris[identifier] = t;
             return t;
         }
 
         /// Ray against a mesh's triangles (Moller-Trumbore); the ray is in the mesh's own space, t is kept in world units.
-        static bool HitMesh(Tris tr, Vector3 o, Vector3 d, out float best)
+        static bool HitMesh(Tris triangles, Vector3 origin, Vector3 direction, out float best)
         {
             best = float.MaxValue;
-            var v = tr.V; var t = tr.T;
-            for (int i = 0; i + 2 < t.Length; i += 3)
+            var v = triangles.V; var t = triangles.T;
+            for (int index = 0; index + 2 < t.Length; index += 3)
             {
-                var a = v[t[i]]; var e1 = v[t[i + 1]] - a; var e2 = v[t[i + 2]] - a;
-                var pv = Vector3.Cross(d, e2);
-                float det = Vector3.Dot(e1, pv);
+                var start = v[t[index]]; var firstEdge = v[t[index + 1]] - start; var secondEdge = v[t[index + 2]] - start;
+                var pv = Vector3.Cross(direction, secondEdge);
+                float det = Vector3.Dot(firstEdge, pv);
                 if (det > -1e-9f && det < 1e-9f) continue;
-                float inv = 1f / det;
-                var tv = o - a;
-                float u = Vector3.Dot(tv, pv) * inv;
+                float inverse = 1f / det;
+                var tv = origin - start;
+                float u = Vector3.Dot(tv, pv) * inverse;
                 if (u < 0f || u > 1f) continue;
-                var qv = Vector3.Cross(tv, e1);
-                float w = Vector3.Dot(d, qv) * inv;
-                if (w < 0f || u + w > 1f) continue;
-                float dist = Vector3.Dot(e2, qv) * inv;
+                var qv = Vector3.Cross(tv, firstEdge);
+                float weight = Vector3.Dot(direction, qv) * inverse;
+                if (weight < 0f || u + weight > 1f) continue;
+                float dist = Vector3.Dot(secondEdge, qv) * inverse;
                 if (dist > 0f && dist < best) best = dist;
             }
             return best < float.MaxValue;
@@ -363,72 +363,72 @@ namespace SteamRailway
             float bestD = maxDist;
             ray.direction = ray.direction.normalized;
 
-            void Test(Cand c, bool prefilter)
+            void Test(Cand candidate, bool prefilter)
             {
                 if (prefilter)
                 {
-                    if (!c.B.IntersectRay(ray, out float d0)) return;
+                    if (!candidate.B.IntersectRay(ray, out float d0)) return;
                     if (d0 > bestD) return;
                 }
-                var hit = FindHit(c.Mats, c.Index);
-                Matrix4x4 m;
+                var hit = FindHit(candidate.Mats, candidate.Index);
+                Matrix4x4 matrix;
                 Vector3 oPos; Quaternion oRot;
                 if (hit != null)
                 {
                     if (!hit.T.Moved) return;                    // hidden
-                    m = hit.T.Delta * hit.Orig;
+                    matrix = hit.T.Delta * hit.Orig;
                     oPos = hit.T.Pos; oRot = RotOf(hit.Orig);
                 }
                 else
                 {
-                    m = ReadMatrix(c.Mats, c.Index);
-                    if (m.m33 == 0f) return;
-                    oPos = new Vector3(m.m03, m.m13, m.m23); oRot = RotOf(m);
+                    matrix = ReadMatrix(candidate.Mats, candidate.Index);
+                    if (matrix.m33 == 0f) return;
+                    oPos = new Vector3(matrix.m03, matrix.m13, matrix.m23); oRot = RotOf(matrix);
                 }
-                var tr = TrisOf(c.Mesh);
-                var inv = m.inverse;
+                var triangles = TrisOf(candidate.Mesh);
+                var inv = matrix.inverse;
                 var o = inv.MultiplyPoint3x4(ray.origin);
                 var dir = inv.MultiplyVector(ray.direction);
                 float dist;
-                if (tr != null) { if (!HitMesh(tr, o, dir, out dist)) return; }
+                if (triangles != null) { if (!HitMesh(triangles, o, dir, out dist)) return; }
                 else
                 {
-                    var lb = c.Mesh.bounds;
-                    if (!lb.IntersectRay(new Ray(o, dir), out dist) || dist < 0f) return;
+                    var localBounds = candidate.Mesh.bounds;
+                    if (!localBounds.IntersectRay(new Ray(o, dir), out dist) || dist < 0f) return;
                 }
                 if (dist >= bestD) return;
                 bestD = dist;
-                var lbb = c.Mesh.bounds;
-                var wb = new Bounds(m.MultiplyPoint3x4(lbb.center), Vector3.zero);
-                for (int i = 0; i < 8; i++)
-                    wb.Encapsulate(m.MultiplyPoint3x4(lbb.center + Vector3.Scale(lbb.extents, new Vector3((i & 1) == 0 ? -1 : 1, (i & 2) == 0 ? -1 : 1, (i & 4) == 0 ? -1 : 1))));
-                string name = Base(c.Name);
-                best = new InstPick { Prefix = name, OrigPos = oPos, OrigRot = oRot, Pos = new Vector3(m.m03, m.m13, m.m23), Rot = RotOf(m), World = wb, Dist = dist };
+                var combinedBounds = candidate.Mesh.bounds;
+                var wb = new Bounds(matrix.MultiplyPoint3x4(combinedBounds.center), Vector3.zero);
+                for (int index = 0; index < 8; index++)
+                    wb.Encapsulate(matrix.MultiplyPoint3x4(combinedBounds.center + Vector3.Scale(combinedBounds.extents, new Vector3((index & 1) == 0 ? -1 : 1, (index & 2) == 0 ? -1 : 1, (index & 4) == 0 ? -1 : 1))));
+                string name = Base(candidate.Name);
+                best = new InstPick { Prefix = name, OrigPos = oPos, OrigRot = oRot, Pos = new Vector3(matrix.m03, matrix.m13, matrix.m23), Rot = RotOf(matrix), World = wb, Dist = dist };
             }
 
-            foreach (var c in s_Cands) Test(c, true);
+            foreach (var candidate in s_Cands) Test(candidate, true);
             // moved ones have left their culling bounds
-            foreach (var h in s_Hits)
+            foreach (var hit in s_Hits)
             {
-                if (!h.T.Moved || h.Mesh == null || h.Name == null || !IsLod0(h.Name)) continue;
-                Test(new Cand { Mats = h.Mats, Index = h.Index, Name = h.Name, Mesh = h.Mesh }, false);
+                if (!hit.T.Moved || hit.Mesh == null || hit.Name == null || !IsLod0(hit.Name)) continue;
+                Test(new Cand { Mats = hit.Mats, Index = hit.Index, Name = hit.Name, Mesh = hit.Mesh }, false);
             }
             return best;
         }
 
         /// The most detailed level of a batch: "..._LOD0" or "..._LOD00".
-        static bool IsLod0(string n) => n.EndsWith("_LOD0", System.StringComparison.Ordinal) || n.EndsWith("_LOD00", System.StringComparison.Ordinal);
+        static bool IsLod0(string name) => name.EndsWith("_LOD0", System.StringComparison.Ordinal) || name.EndsWith("_LOD00", System.StringComparison.Ordinal);
 
-        static string Base(string n)
+        static string Base(string name)
         {
-            int i = n.LastIndexOf("_LOD", System.StringComparison.Ordinal);
-            return i > 0 ? n.Substring(0, i) : n;
+            int index = name.LastIndexOf("_LOD", System.StringComparison.Ordinal);
+            return index > 0 ? name.Substring(0, index) : name;
         }
 
-        static Quaternion RotOf(Matrix4x4 m)
+        static Quaternion RotOf(Matrix4x4 matrix)
         {
-            var f = new Vector3(m.m02, m.m12, m.m22);
-            var u = new Vector3(m.m01, m.m11, m.m21);
+            var f = new Vector3(matrix.m02, matrix.m12, matrix.m22);
+            var u = new Vector3(matrix.m01, matrix.m11, matrix.m21);
             return f.sqrMagnitude > 1e-8f ? Quaternion.LookRotation(f, u) : Quaternion.identity;
         }
 
@@ -443,20 +443,20 @@ namespace SteamRailway
                     s_NextCheck = Time.time + 2f;
                     var list = RenderObjectInstance.s_RenderObjectInstanceList;
                     if (list != null)
-                        foreach (var roi in list)
+                        foreach (var instance in list)
                         {
-                            if (roi == null || roi.m_Batches == null || !roi.m_Batches.IsAllocated()) continue;
-                            if (!s_Done.TryGetValue(roi.Pointer, out var bp) || bp != roi.m_Batches.Pointer)
+                            if (instance == null || instance.m_Batches == null || !instance.m_Batches.IsAllocated()) continue;
+                            if (!s_Done.TryGetValue(instance.Pointer, out var bp) || bp != instance.m_Batches.Pointer)
                             {
                                 s_Hits.Clear();
                                 s_Done.Clear();
-                                foreach (var t in s_Targets) t.Matched = false;
+                                foreach (var target in s_Targets) target.Matched = false;
                                 Apply();
                                 return;
                             }
                         }
                     bool pending = false;
-                    foreach (var t in s_Targets) if (!t.Matched) { pending = true; break; }
+                    foreach (var target in s_Targets) if (!target.Matched) { pending = true; break; }
                     if (pending) Apply();
                 }
                 if (Time.time >= s_NextWrite)

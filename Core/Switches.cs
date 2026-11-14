@@ -69,36 +69,36 @@ namespace SteamRailway
         public static void LevelBranches(IList<TrackDef> defs, List<Vector3> switchPoints)
         {
             var paths = new List<CurvePath>();
-            foreach (var d in defs) paths.Add(CurvePath.CatmullRom(d.Points));
+            foreach (var trackDef in defs) paths.Add(CurvePath.CatmullRom(trackDef.Points));
             for (int bi = 0; bi < defs.Count; bi++)
             {
-                var pts = defs[bi].Points;
+                var points = defs[bi].Points;
                 for (int end = 0; end < 2; end++)
                 {
-                    var p = end == 1 ? pts[pts.Count - 1] : pts[0];
-                    if (!switchPoints.Exists(q => (q - p).sqrMagnitude < 2.25f)) continue;
+                    var point = end == 1 ? points[points.Count - 1] : points[0];
+                    if (!switchPoints.Exists(otherPoint => (otherPoint - point).sqrMagnitude < 2.25f)) continue;
                     // the main line under this end
                     int ai = -1; float best = 2f;
-                    for (int k = 0; k < defs.Count; k++)
+                    for (int deepIndex = 0; deepIndex < defs.Count; deepIndex++)
                     {
-                        if (k == bi) continue;
-                        float s = paths[k].NearestDistance(p, out float d);
-                        if (d < best && s > 3f && s < paths[k].Length - 3f) { best = d; ai = k; }
+                        if (deepIndex == bi) continue;
+                        float arcLength = paths[deepIndex].NearestDistance(point, out float distance);
+                        if (distance < best && arcLength > 3f && arcLength < paths[deepIndex].Length - 3f) { best = distance; ai = deepIndex; }
                     }
                     if (ai < 0) continue;
-                    var a = paths[ai];
+                    var firstCurve = paths[ai];
                     float run = 0f;
                     int changed = 0;
-                    for (int k = 0; k < pts.Count; k++)
+                    for (int deepIndex = 0; deepIndex < points.Count; deepIndex++)
                     {
-                        int i = end == 1 ? pts.Count - 1 - k : k;
-                        if (k > 0) run += Vector3.Distance(pts[i], pts[end == 1 ? i + 1 : i - 1]);
+                        int index = end == 1 ? points.Count - 1 - deepIndex : deepIndex;
+                        if (deepIndex > 0) run += Vector3.Distance(points[index], points[end == 1 ? index + 1 : index - 1]);
                         if (run > LevelLength + LevelBlend) break;
-                        a.Sample(a.NearestDistance(pts[i], out _), out var pa, out _);
-                        float w = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((run - LevelLength) / LevelBlend));
-                        var q = pts[i];
-                        q.y = Mathf.Lerp(pa.y, q.y, w);
-                        pts[i] = q;
+                        firstCurve.Sample(firstCurve.NearestDistance(points[index], out _), out var pa, out _);
+                        float weight = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((run - LevelLength) / LevelBlend));
+                        var otherPoint = points[index];
+                        otherPoint.y = Mathf.Lerp(pa.y, otherPoint.y, weight);
+                        points[index] = otherPoint;
                         changed++;
                     }
                     SteamRailwayMod.Debug($"Branch {defs[bi].Id} levelled with {defs[ai].Id} at the points ({changed} points).");
@@ -109,19 +109,19 @@ namespace SteamRailway
         /// Lines with an end lying on another line (branches leaving it).
         public static List<string> Branches(IList<TrackDef> defs)
         {
-            var res = new List<string>();
+            var results = new List<string>();
             var paths = new List<CurvePath>();
-            foreach (var d in defs) paths.Add(CurvePath.CatmullRom(d.Points));
+            foreach (var trackDef in defs) paths.Add(CurvePath.CatmullRom(trackDef.Points));
             for (int bi = 0; bi < defs.Count; bi++)
             {
                 if (defs[bi].HasCustom) continue;      // a drawn line joins where it was drawn to
                 bool branch = false;
                 for (int end = 0; end < 2 && !branch; end++)
                     for (int ai = 0; ai < defs.Count && !branch; ai++)
-                        if (ai != bi && !res.Contains(defs[ai].Id) && Joins(paths[bi], end == 1, paths[ai], out _, out _)) branch = true;
-                if (branch) res.Add(defs[bi].Id);
+                        if (ai != bi && !results.Contains(defs[ai].Id) && Joins(paths[bi], end == 1, paths[ai], out _, out _)) branch = true;
+                if (branch) results.Add(defs[bi].Id);
             }
-            return res;
+            return results;
         }
 
         static readonly List<TrackSwitch> s_All = new List<TrackSwitch>();
@@ -129,32 +129,32 @@ namespace SteamRailway
 
         public static void Clear()
         {
-            foreach (var s in s_All) if (s.Stand != null) Object.Destroy(s.Stand);
+            foreach (var trackSwitch in s_All) if (trackSwitch.Stand != null) Object.Destroy(trackSwitch.Stand);
             s_All.Clear();
         }
 
-        static float ToSpline(BuiltTrack t, float pathDist) => pathDist * t.Spline.Length / Mathf.Max(1f, t.Path.Length);
+        static float ToSpline(BuiltTrack track, float pathDist) => pathDist * track.Spline.Length / Mathf.Max(1f, track.Path.Length);
 
-        static Vector3 Tangent(CurvePath p, float d)
+        static Vector3 Tangent(CurvePath curve, float distance)
         {
-            p.Sample(d, out _, out var tan);
-            tan.y = 0f;
-            return tan.normalized;
+            curve.Sample(distance, out _, out var tangent);
+            tangent.y = 0f;
+            return tangent.normalized;
         }
 
         /// Does end `atEnd` of line b lie on line a (not at a's ends), heading the same way?
-        static bool Joins(CurvePath b, bool atEnd, CurvePath a, out float sa, out float dot)
+        static bool Joins(CurvePath secondCurve, bool atEnd, CurvePath firstCurve, out float firstArc, out float dotProduct)
         {
-            dot = 0f;
-            var p = atEnd ? b[b.Count - 1] : b[0];
-            sa = a.NearestDistance(p, out float d);
-            if (d > MaxJoinDistance) return false;
-            if (sa < 5f || sa > a.Length - 5f) return false;          // a plain end-to-end meeting
-            a.Sample(sa, out var pa, out _);
-            if (Mathf.Abs(pa.y - p.y) > 1.5f) return false;
-            var inward = atEnd ? -Tangent(b, b.Length - 2f) : Tangent(b, 2f);
-            dot = Vector3.Dot(inward, Tangent(a, sa));
-            return Mathf.Abs(dot) >= Mathf.Cos(MaxJoinAngle * Mathf.Deg2Rad);
+            dotProduct = 0f;
+            var point = atEnd ? secondCurve[secondCurve.Count - 1] : secondCurve[0];
+            firstArc = firstCurve.NearestDistance(point, out float distance);
+            if (distance > MaxJoinDistance) return false;
+            if (firstArc < 5f || firstArc > firstCurve.Length - 5f) return false;          // a plain end-to-end meeting
+            firstCurve.Sample(firstArc, out var pa, out _);
+            if (Mathf.Abs(pa.y - point.y) > 1.5f) return false;
+            var inward = atEnd ? -Tangent(secondCurve, secondCurve.Length - 2f) : Tangent(secondCurve, 2f);
+            dotProduct = Vector3.Dot(inward, Tangent(firstCurve, firstArc));
+            return Mathf.Abs(dotProduct) >= Mathf.Cos(MaxJoinAngle * Mathf.Deg2Rad);
         }
 
         /// Before the splines are built: a branch's end is moved exactly onto the main line's centre (blended over
@@ -162,25 +162,25 @@ namespace SteamRailway
         public static void SnapBranches(IList<TrackDef> defs)
         {
             var paths = new List<CurvePath>();
-            foreach (var d in defs) paths.Add(CurvePath.CatmullRom(d.Points));
+            foreach (var trackDef in defs) paths.Add(CurvePath.CatmullRom(trackDef.Points));
             for (int bi = 0; bi < defs.Count; bi++)
                 for (int end = 0; end < 2; end++)
                     for (int ai = 0; ai < defs.Count; ai++)
                     {
-                        if (ai == bi || !Joins(paths[bi], end == 1, paths[ai], out float sa, out _)) continue;
-                        var pts = defs[bi].Points;
-                        var p = end == 1 ? pts[pts.Count - 1] : pts[0];
-                        paths[ai].Sample(sa, out var pa, out _);
-                        var off = pa - p;
+                        if (ai == bi || !Joins(paths[bi], end == 1, paths[ai], out float firstArc, out _)) continue;
+                        var points = defs[bi].Points;
+                        var point = end == 1 ? points[points.Count - 1] : points[0];
+                        paths[ai].Sample(firstArc, out var pa, out _);
+                        var off = pa - point;
                         float run = 0f;
-                        for (int k = 0; k < pts.Count; k++)
+                        for (int deepIndex = 0; deepIndex < points.Count; deepIndex++)
                         {
-                            int i = end == 1 ? pts.Count - 1 - k : k;
-                            if (k > 0) run += Vector3.Distance(pts[i], pts[end == 1 ? i + 1 : i - 1]);
+                            int index = end == 1 ? points.Count - 1 - deepIndex : deepIndex;
+                            if (deepIndex > 0) run += Vector3.Distance(points[index], points[end == 1 ? index + 1 : index - 1]);
                             if (run >= SnapLength) break;
-                            pts[i] += off * (1f - Mathf.SmoothStep(0f, 1f, run / SnapLength));
+                            points[index] += off * (1f - Mathf.SmoothStep(0f, 1f, run / SnapLength));
                         }
-                        paths[bi] = CurvePath.CatmullRom(pts);
+                        paths[bi] = CurvePath.CatmullRom(points);
                         SteamRailwayMod.Debug($"Branch {defs[bi].Id} snapped {off.magnitude:F2} m onto {defs[ai].Id}.");
                         break;
                     }
@@ -191,270 +191,270 @@ namespace SteamRailway
         public static void Find(IList<BuiltTrack> tracks, Dictionary<string, bool> saved, System.Func<Vector3, bool> allowAt = null)
         {
             Clear();
-            foreach (var b in tracks)
+            foreach (var secondTrack in tracks)
                 for (int end = 0; end < 2; end++)
                 {
                     bool atEnd = end == 1;
-                    foreach (var a in tracks)
+                    foreach (var firstTrack in tracks)
                     {
-                        if (a == b || !Joins(b.Path, atEnd, a.Path, out float sa, out float dot)) continue;
-                        if (allowAt != null && !allowAt(atEnd ? b.Path[b.Path.Count - 1] : b.Path[0])) continue;
-                        float sSpline = ToSpline(a, sa);
-                        string id = $"{a.Id}@{Mathf.RoundToInt(sSpline)}";
-                        if (s_All.Exists(x => x.Id == id)) continue;
-                        var sw = new TrackSwitch
+                        if (firstTrack == secondTrack || !Joins(secondTrack.Path, atEnd, firstTrack.Path, out float firstArc, out float dotProduct)) continue;
+                        if (allowAt != null && !allowAt(atEnd ? secondTrack.Path[secondTrack.Path.Count - 1] : secondTrack.Path[0])) continue;
+                        float sSpline = ToSpline(firstTrack, firstArc);
+                        string identifier = $"{firstTrack.Id}@{Mathf.RoundToInt(sSpline)}";
+                        if (s_All.Exists(x => x.Id == identifier)) continue;
+                        var trackSwitch = new TrackSwitch
                         {
-                            Id = id, A = a, B = b, S = sSpline, SaPath = sa, DirA = dot > 0f ? 1 : -1, BAtEnd = atEnd,
-                            Diverging = saved != null && saved.TryGetValue(id, out bool dv) && dv,
-                            BJoin = atEnd ? b.Path.Length : 0f, InB = atEnd ? -1 : 1,
+                            Id = identifier, A = firstTrack, B = secondTrack, S = sSpline, SaPath = firstArc, DirA = dotProduct > 0f ? 1 : -1, BAtEnd = atEnd,
+                            Diverging = saved != null && saved.TryGetValue(identifier, out bool dv) && dv,
+                            BJoin = atEnd ? secondTrack.Path.Length : 0f, InB = atEnd ? -1 : 1,
                         };
-                        s_All.Add(sw);
-                        try { Turnout(sw); }
-                        catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Turnout {id}: {e.Message}"); }
-                        try { BuildStand(sw); }
-                        catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Switch stand {id}: {e.Message}"); }
-                        SteamRailwayMod.Debug($"Switch {id}: branch {b.Id} ({(atEnd ? "end" : "start")}), points face {(sw.DirA > 0 ? "+" : "-")}, turnout {sw.ZoneB:F0} m.");
+                        s_All.Add(trackSwitch);
+                        try { Turnout(trackSwitch); }
+                        catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Turnout {identifier}: {e.Message}"); }
+                        try { BuildStand(trackSwitch); }
+                        catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Switch stand {identifier}: {e.Message}"); }
+                        SteamRailwayMod.Debug($"Switch {identifier}: branch {secondTrack.Id} ({(atEnd ? "end" : "start")}), points face {(trackSwitch.DirA > 0 ? "+" : "-")}, turnout {trackSwitch.ZoneB:F0} m.");
                     }
                 }
         }
 
         /// Piece-space x axis of the rail laid along a path at d (the same frame RailPieces bends with).
-        static Vector3 SideAxis(CurvePath p, float d)
+        static Vector3 SideAxis(CurvePath curve, float distance)
         {
-            p.Sample(d, out _, out var t);
+            curve.Sample(distance, out _, out var t);
             return Vector3.Cross(Vector3.up, -t).normalized;
         }
 
-        static void Turnout(TrackSwitch sw)
+        static void Turnout(TrackSwitch trackSwitch)
         {
-            var a = sw.A.Path; var b = sw.B.Path;
-            float maxU = Mathf.Min(MaxZone, b.Length - 1f);
+            var firstCurve = trackSwitch.A.Path; var secondCurve = trackSwitch.B.Path;
+            float maxU = Mathf.Min(MaxZone, secondCurve.Length - 1f);
             float lastLat = 0f;
             for (float u = 0f; u <= maxU; u += 0.5f)
             {
-                b.Sample(sw.BJoin + sw.InB * u, out var pb, out _);
-                float sA = a.NearestDistance(pb, out _);
-                a.Sample(sA, out var pa, out _);
-                float lat = Vector3.Dot(pb - pa, SideAxis(a, sA));
-                if (Mathf.Abs(lat) > ZoneLateral) break;
-                sw.ExtA.Add(new Vector2(sA, lat));
+                secondCurve.Sample(trackSwitch.BJoin + trackSwitch.InB * u, out var pb, out _);
+                float firstArc = firstCurve.NearestDistance(pb, out _);
+                firstCurve.Sample(firstArc, out var pa, out _);
+                float lateral = Vector3.Dot(pb - pa, SideAxis(firstCurve, firstArc));
+                if (Mathf.Abs(lateral) > ZoneLateral) break;
+                trackSwitch.ExtA.Add(new Vector2(firstArc, lateral));
                 // angle between the two tracks here (A run towards the frog, B run away from the points)
-                var ta = Tangent(a, sA) * sw.DirA;
-                var tb = Tangent(b, sw.BJoin + sw.InB * u) * sw.InB;
-                sw.YawA.Add(new Vector2(sA, Vector3.Angle(ta, tb) * Mathf.Deg2Rad));
-                sw.ZoneB = u;
-                lastLat = lat;
+                var ta = Tangent(firstCurve, firstArc) * trackSwitch.DirA;
+                var tb = Tangent(secondCurve, trackSwitch.BJoin + trackSwitch.InB * u) * trackSwitch.InB;
+                trackSwitch.YawA.Add(new Vector2(firstArc, Vector3.Angle(ta, tb) * Mathf.Deg2Rad));
+                trackSwitch.ZoneB = u;
+                lastLat = lateral;
             }
-            if (sw.ZoneB < 4f) { sw.ZoneB = 0f; sw.ExtA.Clear(); return; }
-            sw.ExtA.Sort((x, y) => x.x.CompareTo(y.x));
+            if (trackSwitch.ZoneB < 4f) { trackSwitch.ZoneB = 0f; trackSwitch.ExtA.Clear(); return; }
+            trackSwitch.ExtA.Sort((x, y) => x.x.CompareTo(y.x));
             // each long sleeper turns by half the angle between the tracks (square to the line between them)
             float sideSign = Mathf.Sign(lastLat);
-            for (int i = 0; i < sw.YawA.Count; i++)
-                sw.YawA[i] = new Vector2(sw.YawA[i].x, -sw.DirA * sideSign * Mathf.Tan(sw.YawA[i].y * 0.5f));
-            sw.YawA.Sort((x, y) => x.x.CompareTo(y.x));
+            for (int index = 0; index < trackSwitch.YawA.Count; index++)
+                trackSwitch.YawA[index] = new Vector2(trackSwitch.YawA[index].x, -trackSwitch.DirA * sideSign * Mathf.Tan(trackSwitch.YawA[index].y * 0.5f));
+            trackSwitch.YawA.Sort((x, y) => x.x.CompareTo(y.x));
             // where the two tracks part, both have their own sleepers: they must not run into each other
-            for (float u = sw.ZoneB; u <= Mathf.Min(sw.ZoneB + 40f, b.Length - 0.5f); u += 0.5f)
+            for (float u = trackSwitch.ZoneB; u <= Mathf.Min(trackSwitch.ZoneB + 40f, secondCurve.Length - 0.5f); u += 0.5f)
             {
-                float sB = sw.BJoin + sw.InB * u;
-                b.Sample(sB, out var pb, out _);
-                float sA = a.NearestDistance(pb, out _);
-                a.Sample(sA, out var pa, out _);
-                float lat = Vector3.Dot(pb - pa, SideAxis(a, sA));
-                if (Mathf.Abs(lat) > CutUntil) break;
-                sw.CutA.Add(new Vector2(sA, lat));
-                sw.CutB.Add(new Vector2(sB, Vector3.Dot(pa - pb, SideAxis(b, sB))));
+                float secondArc = trackSwitch.BJoin + trackSwitch.InB * u;
+                secondCurve.Sample(secondArc, out var pb, out _);
+                float firstArc = firstCurve.NearestDistance(pb, out _);
+                firstCurve.Sample(firstArc, out var pa, out _);
+                float lateral = Vector3.Dot(pb - pa, SideAxis(firstCurve, firstArc));
+                if (Mathf.Abs(lateral) > CutUntil) break;
+                trackSwitch.CutA.Add(new Vector2(firstArc, lateral));
+                trackSwitch.CutB.Add(new Vector2(secondArc, Vector3.Dot(pa - pb, SideAxis(secondCurve, secondArc))));
             }
-            sw.CutA.Sort((x, y) => x.x.CompareTo(y.x));
-            sw.CutB.Sort((x, y) => x.x.CompareTo(y.x));
-            sw.SideB = SideAxis(a, sw.SaPath) * Mathf.Sign(lastLat);
-            float uSide = Mathf.Min(sw.ZoneB, 3f);
-            sw.BranchRail = Vector3.Dot(SideAxis(b, sw.BJoin + sw.InB * uSide) * 1f, sw.SideB) * 1f >= 0f ? 1 : -1;
-            sw.BladeLen = Mathf.Min(BladeLength, sw.ZoneB);
+            trackSwitch.CutA.Sort((x, y) => x.x.CompareTo(y.x));
+            trackSwitch.CutB.Sort((x, y) => x.x.CompareTo(y.x));
+            trackSwitch.SideB = SideAxis(firstCurve, trackSwitch.SaPath) * Mathf.Sign(lastLat);
+            float uSide = Mathf.Min(trackSwitch.ZoneB, 3f);
+            trackSwitch.BranchRail = Vector3.Dot(SideAxis(secondCurve, trackSwitch.BJoin + trackSwitch.InB * uSide) * 1f, trackSwitch.SideB) * 1f >= 0f ? 1 : -1;
+            trackSwitch.BladeLen = Mathf.Min(BladeLength, trackSwitch.ZoneB);
 
             // the blade turns about its heel; set for the main line its toe stands off towards the branch side
-            b.Sample(sw.BJoin, out var toe, out _);
-            b.Sample(sw.BJoin + sw.InB * sw.BladeLen, out var heel, out _);
+            secondCurve.Sample(trackSwitch.BJoin, out var toe, out _);
+            secondCurve.Sample(trackSwitch.BJoin + trackSwitch.InB * trackSwitch.BladeLen, out var heel, out _);
             var pivot = new GameObject("SwitchBlade").transform;
-            pivot.SetParent(sw.B.Rails, false);
+            pivot.SetParent(trackSwitch.B.Rails, false);
             pivot.position = heel;
-            sw.Blade = pivot;
-            var v = toe - heel; v.y = 0f;
-            float sign = Mathf.Sign(Vector3.Dot(Vector3.Cross(Vector3.up, v), sw.SideB));
-            sw.BladeOpenDeg = sign * Mathf.Rad2Deg * BladeOpen / Mathf.Max(1f, v.magnitude);
+            trackSwitch.Blade = pivot;
+            var vector = toe - heel; vector.y = 0f;
+            float sign = Mathf.Sign(Vector3.Dot(Vector3.Cross(Vector3.up, vector), trackSwitch.SideB));
+            trackSwitch.BladeOpenDeg = sign * Mathf.Rad2Deg * BladeOpen / Mathf.Max(1f, vector.magnitude);
         }
 
         const float CutUntil = 4.3f;     // m between the centres: from here on the sleepers no longer touch
         const float MinReach = 1.12f;    // a sleeper always reaches past its rail's foot
 
         /// Signed reach of the sleepers on the other track's side at path metres s (0: whole sleepers).
-        static float CutAt(List<Vector2> e, float s)
+        static float CutAt(List<Vector2> edges, float arcLength)
         {
-            if (e.Count < 2 || s < e[0].x || s > e[e.Count - 1].x) return 0f;
-            int lo = 0, hi = e.Count - 1;
-            while (hi - lo > 1) { int m = (lo + hi) >> 1; if (e[m].x <= s) lo = m; else hi = m; }
-            float t = e[hi].x - e[lo].x > 1e-4f ? (s - e[lo].x) / (e[hi].x - e[lo].x) : 0f;
-            float lat = Mathf.Lerp(e[lo].y, e[hi].y, t);
-            float reach = Mathf.Max(MinReach, Mathf.Abs(lat) * 0.5f - 0.05f);
-            return Mathf.Sign(lat) * reach;
+            if (edges.Count < 2 || arcLength < edges[0].x || arcLength > edges[edges.Count - 1].x) return 0f;
+            int lower = 0, upper = edges.Count - 1;
+            while (upper - lower > 1) { int m = (lower + upper) >> 1; if (edges[m].x <= arcLength) lower = m; else upper = m; }
+            float fraction = edges[upper].x - edges[lower].x > 1e-4f ? (arcLength - edges[lower].x) / (edges[upper].x - edges[lower].x) : 0f;
+            float lateral = Mathf.Lerp(edges[lower].y, edges[upper].y, fraction);
+            float reach = Mathf.Max(MinReach, Mathf.Abs(lateral) * 0.5f - 0.05f);
+            return Mathf.Sign(lateral) * reach;
         }
 
-        static float YawAt(TrackSwitch sw, float s)
+        static float YawAt(TrackSwitch trackSwitch, float arcLength)
         {
-            var e = sw.YawA;
-            if (e.Count < 2 || s < e[0].x || s > e[e.Count - 1].x) return 0f;
-            int lo = 0, hi = e.Count - 1;
-            while (hi - lo > 1) { int m = (lo + hi) >> 1; if (e[m].x <= s) lo = m; else hi = m; }
-            float t = e[hi].x - e[lo].x > 1e-4f ? (s - e[lo].x) / (e[hi].x - e[lo].x) : 0f;
-            return Mathf.Lerp(e[lo].y, e[hi].y, t);
+            var edges = trackSwitch.YawA;
+            if (edges.Count < 2 || arcLength < edges[0].x || arcLength > edges[edges.Count - 1].x) return 0f;
+            int lower = 0, upper = edges.Count - 1;
+            while (upper - lower > 1) { int m = (lower + upper) >> 1; if (edges[m].x <= arcLength) lower = m; else upper = m; }
+            float fraction = edges[upper].x - edges[lower].x > 1e-4f ? (arcLength - edges[lower].x) / (edges[upper].x - edges[lower].x) : 0f;
+            return Mathf.Lerp(edges[lower].y, edges[upper].y, fraction);
         }
 
         /// Signed lengthening of A's sleepers at path metres s on A (0 outside the turnout).
-        static float ExtAt(TrackSwitch sw, float s)
+        static float ExtAt(TrackSwitch trackSwitch, float arcLength)
         {
-            var e = sw.ExtA;
-            if (e.Count < 2 || s < e[0].x || s > e[e.Count - 1].x) return 0f;
-            int lo = 0, hi = e.Count - 1;
-            while (hi - lo > 1) { int m = (lo + hi) >> 1; if (e[m].x <= s) lo = m; else hi = m; }
-            float t = e[hi].x - e[lo].x > 1e-4f ? (s - e[lo].x) / (e[hi].x - e[lo].x) : 0f;
-            return Mathf.Lerp(e[lo].y, e[hi].y, t);
+            var edges = trackSwitch.ExtA;
+            if (edges.Count < 2 || arcLength < edges[0].x || arcLength > edges[edges.Count - 1].x) return 0f;
+            int lower = 0, upper = edges.Count - 1;
+            while (upper - lower > 1) { int m = (lower + upper) >> 1; if (edges[m].x <= arcLength) lower = m; else upper = m; }
+            float fraction = edges[upper].x - edges[lower].x > 1e-4f ? (arcLength - edges[lower].x) / (edges[upper].x - edges[lower].x) : 0f;
+            return Mathf.Lerp(edges[lower].y, edges[upper].y, fraction);
         }
 
         /// How a line's turnouts change its rail, as functions of path metres, so the whole line is laid in one go
         /// and its sleepers keep one even rhythm through the points. null: the line has no turnout.
-        public static LayOptions Combined(BuiltTrack t)
+        public static LayOptions Combined(BuiltTrack track)
         {
-            var asA = s_All.FindAll(sw => sw.A == t && sw.ZoneB > 0f);
-            var asB = s_All.FindAll(sw => sw.B == t && sw.ZoneB > 0f);
-            if (asA.Count == 0 && asB.Count == 0) return null;
-            bool InZone(TrackSwitch sw, float d) { float z = sw.BJoin + sw.InB * sw.ZoneB; return d >= Mathf.Min(sw.BJoin, z) && d <= Mathf.Max(sw.BJoin, z); }
-            bool InBlade(TrackSwitch sw, float d) { float k = sw.BJoin + sw.InB * sw.BladeLen; return d >= Mathf.Min(sw.BJoin, k) && d <= Mathf.Max(sw.BJoin, k); }
+            var switchesOfFirst = s_All.FindAll(trackSwitch => trackSwitch.A == track && trackSwitch.ZoneB > 0f);
+            var switchesOfSecond = s_All.FindAll(trackSwitch => trackSwitch.B == track && trackSwitch.ZoneB > 0f);
+            if (switchesOfFirst.Count == 0 && switchesOfSecond.Count == 0) return null;
+            bool InZone(TrackSwitch trackSwitch, float distance) { float z = trackSwitch.BJoin + trackSwitch.InB * trackSwitch.ZoneB; return distance >= Mathf.Min(trackSwitch.BJoin, z) && distance <= Mathf.Max(trackSwitch.BJoin, z); }
+            bool InBlade(TrackSwitch trackSwitch, float distance) { float scale = trackSwitch.BJoin + trackSwitch.InB * trackSwitch.BladeLen; return distance >= Mathf.Min(trackSwitch.BJoin, scale) && distance <= Mathf.Max(trackSwitch.BJoin, scale); }
             return new LayOptions
             {
-                SleeperExt = d => { foreach (var sw in asA) { float e = ExtAt(sw, d); if (e != 0f) return e; } return 0f; },
-                SleeperYaw = d => { foreach (var sw in asA) { float y = YawAt(sw, d); if (y != 0f) return y; } return 0f; },
-                SleeperCut = d =>
+                SleeperExt = distance => { foreach (var trackSwitch in switchesOfFirst) { float error = ExtAt(trackSwitch, distance); if (error != 0f) return error; } return 0f; },
+                SleeperYaw = distance => { foreach (var trackSwitch in switchesOfFirst) { float y = YawAt(trackSwitch, distance); if (y != 0f) return y; } return 0f; },
+                SleeperCut = distance =>
                 {
-                    foreach (var sw in asA) { float c = CutAt(sw.CutA, d); if (c != 0f) return c; }
-                    foreach (var sw in asB) { float c = CutAt(sw.CutB, d); if (c != 0f) return c; }
+                    foreach (var trackSwitch in switchesOfFirst) { float cosine = CutAt(trackSwitch.CutA, distance); if (cosine != 0f) return cosine; }
+                    foreach (var trackSwitch in switchesOfSecond) { float cosine = CutAt(trackSwitch.CutB, distance); if (cosine != 0f) return cosine; }
                     return 0f;
                 },
                 // under the points the branch has no sleepers of its own (the main line's long ones carry it)
-                SleeperKeep = asB.Count == 0 ? null : (System.Func<float, bool>)(d => { foreach (var sw in asB) if (InZone(sw, d)) return false; return true; }),
+                SleeperKeep = switchesOfSecond.Count == 0 ? null : (System.Func<float, bool>)(distance => { foreach (var trackSwitch in switchesOfSecond) if (InZone(trackSwitch, distance)) return false; return true; }),
                 // the branch's rails at the points are laid apart (one of them is the moving blade)
-                RailKeep = asB.Count == 0 ? null : (System.Func<float, bool>)(d => { foreach (var sw in asB) if (InBlade(sw, d)) return false; return true; }),
+                RailKeep = switchesOfSecond.Count == 0 ? null : (System.Func<float, bool>)(distance => { foreach (var trackSwitch in switchesOfSecond) if (InBlade(trackSwitch, distance)) return false; return true; }),
             };
         }
 
         /// The branch rails at the points: the fixed one and the moving blade (rails only).
-        public static List<TurnoutRange> Blades(BuiltTrack t)
+        public static List<TurnoutRange> Blades(BuiltTrack track)
         {
-            var res = new List<TurnoutRange>();
-            foreach (var sw in s_All)
+            var results = new List<TurnoutRange>();
+            foreach (var trackSwitch in s_All)
             {
-                if (sw.B != t || sw.ZoneB <= 0f) continue;
-                float j = sw.BJoin, k = sw.BJoin + sw.InB * sw.BladeLen;
-                res.Add(new TurnoutRange { From = Mathf.Min(j, k), To = Mathf.Max(j, k), Options = new[]
+                if (trackSwitch.B != track || trackSwitch.ZoneB <= 0f) continue;
+                float j = trackSwitch.BJoin, scale = trackSwitch.BJoin + trackSwitch.InB * trackSwitch.BladeLen;
+                results.Add(new TurnoutRange { From = Mathf.Min(j, scale), To = Mathf.Max(j, scale), Options = new[]
                 {
-                    new LayOptions { Sleepers = false, RailSide = sw.BranchRail, YOffset = -0.004f },
-                    new LayOptions { Sleepers = false, RailSide = -sw.BranchRail, YOffset = -0.003f, Parent = sw.Blade },
+                    new LayOptions { Sleepers = false, RailSide = trackSwitch.BranchRail, YOffset = -0.004f },
+                    new LayOptions { Sleepers = false, RailSide = -trackSwitch.BranchRail, YOffset = -0.003f, Parent = trackSwitch.Blade },
                 } });
             }
-            return res;
+            return results;
         }
 
         /// The stretches of a line its turnouts lay differently, sorted, not overlapping.
-        public static List<TurnoutRange> TurnoutRanges(BuiltTrack t)
+        public static List<TurnoutRange> TurnoutRanges(BuiltTrack track)
         {
-            var res = new List<TurnoutRange>();
-            foreach (var sw in s_All)
+            var results = new List<TurnoutRange>();
+            foreach (var trackSwitch in s_All)
             {
-                if (sw.ZoneB <= 0f) continue;
-                if (sw.A == t)
+                if (trackSwitch.ZoneB <= 0f) continue;
+                if (trackSwitch.A == track)
                 {
-                    var s = sw;
-                    res.Add(new TurnoutRange { From = sw.ExtA[0].x, To = sw.ExtA[sw.ExtA.Count - 1].x,
-                        Options = new[] { new LayOptions { SleeperExt = d => ExtAt(s, d), SleeperYaw = d => YawAt(s, d) } } });
-                    if (sw.CutA.Count >= 2)
-                        res.Add(new TurnoutRange { From = sw.CutA[0].x, To = sw.CutA[sw.CutA.Count - 1].x,
-                            Options = new[] { new LayOptions { SleeperCut = d => CutAt(s.CutA, d) } } });
+                    var s = trackSwitch;
+                    results.Add(new TurnoutRange { From = trackSwitch.ExtA[0].x, To = trackSwitch.ExtA[trackSwitch.ExtA.Count - 1].x,
+                        Options = new[] { new LayOptions { SleeperExt = distance => ExtAt(s, distance), SleeperYaw = distance => YawAt(s, distance) } } });
+                    if (trackSwitch.CutA.Count >= 2)
+                        results.Add(new TurnoutRange { From = trackSwitch.CutA[0].x, To = trackSwitch.CutA[trackSwitch.CutA.Count - 1].x,
+                            Options = new[] { new LayOptions { SleeperCut = distance => CutAt(s.CutA, distance) } } });
                 }
-                if (sw.B == t)
+                if (trackSwitch.B == track)
                 {
-                    float j = sw.BJoin, k = sw.BJoin + sw.InB * sw.BladeLen, z = sw.BJoin + sw.InB * sw.ZoneB;
+                    float j = trackSwitch.BJoin, scale = trackSwitch.BJoin + trackSwitch.InB * trackSwitch.BladeLen, z = trackSwitch.BJoin + trackSwitch.InB * trackSwitch.ZoneB;
                     // under the points: the branch-side rail stays put, the other rail is the moving blade
-                    res.Add(new TurnoutRange { From = Mathf.Min(j, k), To = Mathf.Max(j, k), Options = new[]
+                    results.Add(new TurnoutRange { From = Mathf.Min(j, scale), To = Mathf.Max(j, scale), Options = new[]
                     {
-                        new LayOptions { Sleepers = false, RailSide = sw.BranchRail, YOffset = -0.004f },
-                        new LayOptions { Sleepers = false, RailSide = -sw.BranchRail, YOffset = -0.003f, Parent = sw.Blade },
+                        new LayOptions { Sleepers = false, RailSide = trackSwitch.BranchRail, YOffset = -0.004f },
+                        new LayOptions { Sleepers = false, RailSide = -trackSwitch.BranchRail, YOffset = -0.003f, Parent = trackSwitch.Blade },
                     } });
                     // on to the frog: rails on A's long sleepers
-                    res.Add(new TurnoutRange { From = Mathf.Min(k, z), To = Mathf.Max(k, z),
+                    results.Add(new TurnoutRange { From = Mathf.Min(scale, z), To = Mathf.Max(scale, z),
                         Options = new[] { new LayOptions { Sleepers = false, YOffset = -0.004f } } });
-                    var sb = sw;
-                    if (sw.CutB.Count >= 2)
-                        res.Add(new TurnoutRange { From = sw.CutB[0].x, To = sw.CutB[sw.CutB.Count - 1].x,
-                            Options = new[] { new LayOptions { SleeperCut = d => CutAt(sb.CutB, d) } } });
+                    var branchSwitch = trackSwitch;
+                    if (trackSwitch.CutB.Count >= 2)
+                        results.Add(new TurnoutRange { From = trackSwitch.CutB[0].x, To = trackSwitch.CutB[trackSwitch.CutB.Count - 1].x,
+                            Options = new[] { new LayOptions { SleeperCut = distance => CutAt(branchSwitch.CutB, distance) } } });
                 }
             }
-            res.Sort((x, y) => x.From.CompareTo(y.From));
+            results.Sort((turnoutRange, otherTurnoutRange) => turnoutRange.From.CompareTo(otherTurnoutRange.From));
             // two turnouts on one stretch: the first wins
-            for (int i = 1; i < res.Count; i++)
-                if (res[i].From < res[i - 1].To) { res[i].From = res[i - 1].To; if (res[i].To <= res[i].From) res.RemoveAt(i--); }
-            return res;
+            for (int index = 1; index < results.Count; index++)
+                if (results[index].From < results[index - 1].To) { results[index].From = results[index - 1].To; if (results[index].To <= results[index].From) results.RemoveAt(index--); }
+            return results;
         }
 
         /// After the rails are laid: the blades take their positions.
         public static void RailsLaid()
         {
-            foreach (var sw in s_All) { sw.RailsLaid = true; UpdateLook(sw, true); }
+            foreach (var trackSwitch in s_All) { trackSwitch.RailsLaid = true; UpdateLook(trackSwitch, true); }
         }
 
         // ------------------------------------------------------------------ the stand
 
-        static void BuildStand(TrackSwitch sw)
+        static void BuildStand(TrackSwitch trackSwitch)
         {
-            var a = sw.A.Path;
+            var firstCurve = trackSwitch.A.Path;
             // beside the toe of the points, on the side away from the branch
-            float sStand = Mathf.Clamp(sw.SaPath - sw.DirA * 3f, 0f, a.Length);
-            a.Sample(sStand, out var p, out _);
-            var ta = Tangent(a, sStand);
+            float sStand = Mathf.Clamp(trackSwitch.SaPath - trackSwitch.DirA * 3f, 0f, firstCurve.Length);
+            firstCurve.Sample(sStand, out var point, out _);
+            var ta = Tangent(firstCurve, sStand);
             var side = Vector3.Cross(Vector3.up, ta).normalized;               // right of +A
             Vector3 away;
-            if (sw.SideB.sqrMagnitude > 0.5f) away = -sw.SideB;
+            if (trackSwitch.SideB.sqrMagnitude > 0.5f) away = -trackSwitch.SideB;
             else
             {
-                var bp = sw.BAtEnd ? sw.B.Path[sw.B.Path.Count - 1] : sw.B.Path[0];
-                sw.B.Path.Sample(sw.BJoin + sw.InB * 15f, out var bIn, out _);
+                var bp = trackSwitch.BAtEnd ? trackSwitch.B.Path[trackSwitch.B.Path.Count - 1] : trackSwitch.B.Path[0];
+                trackSwitch.B.Path.Sample(trackSwitch.BJoin + trackSwitch.InB * 15f, out var bIn, out _);
                 away = side * -Mathf.Sign(Vector3.Dot(bIn - bp, side));
             }
-            sw.RailY = p.y;
-            var pos = p + away * 2.7f;
+            trackSwitch.RailY = point.y;
+            var pos = point + away * 2.7f;
             pos.y = H.GroundBelow(pos + Vector3.up * 3f, 10f).y - 0.1f;
 
-            var root = new GameObject(StandPrefix + sw.Id);
+            var root = new GameObject(StandPrefix + trackSwitch.Id);
             root.transform.position = pos;
             root.transform.rotation = Quaternion.LookRotation(ta, Vector3.up) * (Vector3.Dot(away, side) > 0 ? Quaternion.identity : Quaternion.Euler(0f, 180f, 0f));
-            sw.Stand = root;
+            trackSwitch.Stand = root;
 
             var model = LocomotiveModel.SpawnSwitch(root.transform);
             if (model != null)
             {
-                sw.Lever = LocomotiveModel.FindDeep(model.transform, "Switch_Lever");
-                sw.Target = LocomotiveModel.FindDeep(model.transform, "Switch_Target");
+                trackSwitch.Lever = LocomotiveModel.FindDeep(model.transform, "Switch_Lever");
+                trackSwitch.Target = LocomotiveModel.FindDeep(model.transform, "Switch_Target");
             }
-            else SteamRailwayMod.Log.Warning($"Switch {sw.Id}: the stand model is missing from the bundle.");
+            else SteamRailwayMod.Log.Warning($"Switch {trackSwitch.Id}: the stand model is missing from the bundle.");
             // which way the lever leans for the branch: towards the branch's side, measured on the model itself
             var branchSide = -away;
-            if (sw.Lever != null)
+            if (trackSwitch.Lever != null)
             {
-                var keep = sw.Lever.localRotation;
-                sw.Lever.localRotation = Quaternion.Euler(0f, 0f, LeverThrow);
-                var up = sw.Lever.up; up.y = 0f;
-                sw.LeverDiv = Vector3.Dot(up, branchSide) > 0f ? LeverThrow : -LeverThrow;
-                sw.Lever.localRotation = keep;
+                var keep = trackSwitch.Lever.localRotation;
+                trackSwitch.Lever.localRotation = Quaternion.Euler(0f, 0f, LeverThrow);
+                var up = trackSwitch.Lever.up; up.y = 0f;
+                trackSwitch.LeverDiv = Vector3.Dot(up, branchSide) > 0f ? LeverThrow : -LeverThrow;
+                trackSwitch.Lever.localRotation = keep;
             }
-            var run = ta * sw.DirA;
-            sw.BranchLeft = Vector3.Dot(branchSide, Vector3.Cross(Vector3.up, run)) < 0f;
+            var run = ta * trackSwitch.DirA;
+            trackSwitch.BranchLeft = Vector3.Dot(branchSide, Vector3.Cross(Vector3.up, run)) < 0f;
 
             // the clickable part: hold to throw
             root.layer = LayerMask.NameToLayer("InteractiveProp");
@@ -470,77 +470,77 @@ namespace SteamRailway
             hold.HoldTime = 1.2f;
             hold.HoldText = L.T("Makas çevriliyor...", "Throwing the switch...");
             hold.CanInteract = true;
-            UpdateLook(sw, true);
+            UpdateLook(trackSwitch, true);
         }
 
         /// After the snow along the lines was lowered or filled: every stand is put back on the ground.
         public static void GroundStands()
         {
-            foreach (var sw in s_All)
+            foreach (var trackSwitch in s_All)
             {
-                if (sw.Stand == null) continue;
-                var p = sw.Stand.transform.position;
+                if (trackSwitch.Stand == null) continue;
+                var samplePoint = trackSwitch.Stand.transform.position;
                 // the highest solid surface not above the rails (terrain or a ground mesh; not branches or wires)
-                float top = sw.RailY + 0.5f, y = float.MinValue;
-                foreach (var h in Physics.RaycastAll(new Vector3(p.x, top + 30f, p.z), Vector3.down, 80f, ~0, QueryTriggerInteraction.Ignore))
+                float top = trackSwitch.RailY + 0.5f, y = float.MinValue;
+                foreach (var hit in Physics.RaycastAll(new Vector3(samplePoint.x, top + 30f, samplePoint.z), Vector3.down, 80f, ~0, QueryTriggerInteraction.Ignore))
                 {
-                    if (h.point.y > top || h.point.y <= y) continue;
+                    if (hit.point.y > top || hit.point.y <= y) continue;
                     bool ours = false;
-                    for (var x = h.collider.transform; x != null; x = x.parent)
-                        if (x.name.StartsWith("SR_") || x.name.StartsWith("SteamRailway") || x.name.StartsWith(TrainBuilder.NamePrefix)) { ours = true; break; }
-                    if (!ours) y = h.point.y;
+                    for (var node = hit.collider.transform; node != null; node = node.parent)
+                        if (node.name.StartsWith("SR_") || node.name.StartsWith("SteamRailway") || node.name.StartsWith(TrainBuilder.NamePrefix)) { ours = true; break; }
+                    if (!ours) y = hit.point.y;
                 }
-                if (y == float.MinValue) y = sw.RailY - RailPieces.RailTop;
-                sw.Stand.transform.position = new Vector3(p.x, y - 0.1f, p.z);
+                if (y == float.MinValue) y = trackSwitch.RailY - RailPieces.RailTop;
+                trackSwitch.Stand.transform.position = new Vector3(samplePoint.x, y - 0.1f, samplePoint.z);
             }
         }
 
-        public static string HoverText(TrackSwitch sw) =>
-            (sw.Diverging
-                ? (sw.BranchLeft ? L.T("Makas: SOLA (sapak hat)", "Switch: LEFT (branch)") : L.T("Makas: SAĞA (sapak hat)", "Switch: RIGHT (branch)"))
-                : (sw.BranchLeft ? L.T("Makas: SAĞA / düz (ana hat)", "Switch: RIGHT / straight (main line)") : L.T("Makas: SOLA / düz (ana hat)", "Switch: LEFT / straight (main line)")))
+        public static string HoverText(TrackSwitch trackSwitch) =>
+            (trackSwitch.Diverging
+                ? (trackSwitch.BranchLeft ? L.T("Makas: SOLA (sapak hat)", "Switch: LEFT (branch)") : L.T("Makas: SAĞA (sapak hat)", "Switch: RIGHT (branch)"))
+                : (trackSwitch.BranchLeft ? L.T("Makas: SAĞA / düz (ana hat)", "Switch: RIGHT / straight (main line)") : L.T("Makas: SOLA / düz (ana hat)", "Switch: LEFT / straight (main line)")))
             + L.T("  (basılı tut: çevir)", "  (hold: throw)");
 
-        static Quaternion BladeRot(TrackSwitch sw) => Quaternion.Euler(0f, sw.Diverging ? 0f : sw.BladeOpenDeg, 0f);
+        static Quaternion BladeRot(TrackSwitch trackSwitch) => Quaternion.Euler(0f, trackSwitch.Diverging ? 0f : trackSwitch.BladeOpenDeg, 0f);
 
-        static void UpdateLook(TrackSwitch sw, bool immediate)
+        static void UpdateLook(TrackSwitch trackSwitch, bool immediate)
         {
-            if (sw.Stand != null)
+            if (trackSwitch.Stand != null)
             {
-                var bi = sw.Stand.GetComponent<BaseInteraction>();
-                if (bi != null) bi.HoverText = HoverText(sw);
-                var th = sw.Stand.GetComponent<TimedHoldInteraction>();
-                if (th != null)
+                var interaction = trackSwitch.Stand.GetComponent<BaseInteraction>();
+                if (interaction != null) interaction.HoverText = HoverText(trackSwitch);
+                var holdInteraction = trackSwitch.Stand.GetComponent<TimedHoldInteraction>();
+                if (holdInteraction != null)
                 {
-                    th.HoldText = L.T("Makas çevriliyor...", "Throwing the switch...");
-                    if (th.HoldTime <= 0f) th.HoldTime = 1.2f;
+                    holdInteraction.HoldText = L.T("Makas çevriliyor...", "Throwing the switch...");
+                    if (holdInteraction.HoldTime <= 0f) holdInteraction.HoldTime = 1.2f;
                 }
             }
             if (immediate)
             {
-                if (sw.Lever != null) sw.Lever.localRotation = Quaternion.Euler(0f, 0f, sw.Diverging ? sw.LeverDiv : -sw.LeverDiv);
-                if (sw.Target != null) sw.Target.localRotation = Quaternion.Euler(0f, sw.Diverging ? 90f : 0f, 0f);
-                if (sw.Blade != null && sw.RailsLaid) sw.Blade.localRotation = BladeRot(sw);
+                if (trackSwitch.Lever != null) trackSwitch.Lever.localRotation = Quaternion.Euler(0f, 0f, trackSwitch.Diverging ? trackSwitch.LeverDiv : -trackSwitch.LeverDiv);
+                if (trackSwitch.Target != null) trackSwitch.Target.localRotation = Quaternion.Euler(0f, trackSwitch.Diverging ? 90f : 0f, 0f);
+                if (trackSwitch.Blade != null && trackSwitch.RailsLaid) trackSwitch.Blade.localRotation = BladeRot(trackSwitch);
             }
-            else MelonLoader.MelonCoroutines.Start(Animate(sw));
+            else MelonLoader.MelonCoroutines.Start(Animate(trackSwitch));
         }
 
-        static System.Collections.IEnumerator Animate(TrackSwitch sw)
+        static System.Collections.IEnumerator Animate(TrackSwitch trackSwitch)
         {
-            float t = 0f;
-            Quaternion l0 = sw.Lever != null ? sw.Lever.localRotation : Quaternion.identity;
-            Quaternion g0 = sw.Target != null ? sw.Target.localRotation : Quaternion.identity;
-            Quaternion b0 = sw.Blade != null ? sw.Blade.localRotation : Quaternion.identity;
-            var l1 = Quaternion.Euler(0f, 0f, sw.Diverging ? sw.LeverDiv : -sw.LeverDiv);
-            var g1 = Quaternion.Euler(0f, sw.Diverging ? 90f : 0f, 0f);
-            var b1 = BladeRot(sw);
-            while (t < 1f)
+            float fraction = 0f;
+            Quaternion l0 = trackSwitch.Lever != null ? trackSwitch.Lever.localRotation : Quaternion.identity;
+            Quaternion g0 = trackSwitch.Target != null ? trackSwitch.Target.localRotation : Quaternion.identity;
+            Quaternion b0 = trackSwitch.Blade != null ? trackSwitch.Blade.localRotation : Quaternion.identity;
+            var l1 = Quaternion.Euler(0f, 0f, trackSwitch.Diverging ? trackSwitch.LeverDiv : -trackSwitch.LeverDiv);
+            var g1 = Quaternion.Euler(0f, trackSwitch.Diverging ? 90f : 0f, 0f);
+            var b1 = BladeRot(trackSwitch);
+            while (fraction < 1f)
             {
-                t += Time.deltaTime / 0.6f;
-                float k = Mathf.SmoothStep(0f, 1f, t);
-                if (sw.Lever != null) sw.Lever.localRotation = Quaternion.Slerp(l0, l1, k);
-                if (sw.Target != null) sw.Target.localRotation = Quaternion.Slerp(g0, g1, Mathf.Clamp01(k * 1.4f - 0.2f));
-                if (sw.Blade != null && sw.RailsLaid) sw.Blade.localRotation = Quaternion.Slerp(b0, b1, Mathf.Clamp01(k * 1.25f - 0.25f));
+                fraction += Time.deltaTime / 0.6f;
+                float scale = Mathf.SmoothStep(0f, 1f, fraction);
+                if (trackSwitch.Lever != null) trackSwitch.Lever.localRotation = Quaternion.Slerp(l0, l1, scale);
+                if (trackSwitch.Target != null) trackSwitch.Target.localRotation = Quaternion.Slerp(g0, g1, Mathf.Clamp01(scale * 1.4f - 0.2f));
+                if (trackSwitch.Blade != null && trackSwitch.RailsLaid) trackSwitch.Blade.localRotation = Quaternion.Slerp(b0, b1, Mathf.Clamp01(scale * 1.25f - 0.25f));
                 yield return null;
             }
         }
@@ -548,64 +548,64 @@ namespace SteamRailway
         /// The player threw the lever of a stand (see Patches/SwitchPatches).
         public static bool Throw(GameObject stand)
         {
-            var sw = s_All.Find(x => x.Stand == stand);
-            if (sw == null) return false;
-            sw.Diverging = !sw.Diverging;
-            RailwayManager.SaveSwitch(sw.Id, sw.Diverging);
-            UpdateLook(sw, false);
+            var trackSwitch = s_All.Find(x => x.Stand == stand);
+            if (trackSwitch == null) return false;
+            trackSwitch.Diverging = !trackSwitch.Diverging;
+            RailwayManager.SaveSwitch(trackSwitch.Id, trackSwitch.Diverging);
+            UpdateLook(trackSwitch, false);
             TrainSounds.Play(TrainSounds.SwitchThrow, stand);
-            CabControls.Message(HoverText(sw).Replace(L.T("  (basılı tut: çevir)", "  (hold: throw)"), ""));
+            CabControls.Message(HoverText(trackSwitch).Replace(L.T("  (basılı tut: çevir)", "  (hold: throw)"), ""));
             return true;
         }
 
         // ------------------------------------------------------------------ trains
 
         /// Moves a train onto the other line when it runs over a junction. prev/pos: spline metres on its line.
-        public static BuiltTrack Pass(LiveTrain t, BuiltTrack line, float prev, float pos)
+        public static BuiltTrack Pass(LiveTrain liveTrain, BuiltTrack line, float prev, float position)
         {
-            if (Mathf.Abs(pos - prev) < 1e-4f) return null;
-            int moving = pos > prev ? 1 : -1;
-            float v = t.Sim.Velocity;
-            int run = v >= 0f ? 1 : -1;
-            foreach (var sw in s_All)
+            if (Mathf.Abs(position - prev) < 1e-4f) return null;
+            int moving = position > prev ? 1 : -1;
+            float value = liveTrain.Sim.Velocity;
+            int run = value >= 0f ? 1 : -1;
+            foreach (var trackSwitch in s_All)
             {
-                if (sw.A == line && sw.Diverging && moving == sw.DirA && (prev - sw.S) * (pos - sw.S) <= 0f)
+                if (trackSwitch.A == line && trackSwitch.Diverging && moving == trackSwitch.DirA && (prev - trackSwitch.S) * (position - trackSwitch.S) <= 0f)
                 {
                     // facing points set for the branch: onto B, into it
-                    float over = Mathf.Abs(pos - sw.S);
-                    float lenB = sw.B.Spline.Length;
-                    int inB = sw.BAtEnd ? -1 : 1;
-                    Move(t, sw.B, sw.BAtEnd ? lenB - over : over, inB * run);
-                    return sw.B;
+                    float over = Mathf.Abs(position - trackSwitch.S);
+                    float lenB = trackSwitch.B.Spline.Length;
+                    int inB = trackSwitch.BAtEnd ? -1 : 1;
+                    Move(liveTrain, trackSwitch.B, trackSwitch.BAtEnd ? lenB - over : over, inB * run);
+                    return trackSwitch.B;
                 }
-                if (sw.B == line)
+                if (trackSwitch.B == line)
                 {
-                    float lenB = sw.B.Spline.Length;
-                    bool leaving = sw.BAtEnd ? (moving > 0 && pos >= lenB - 0.3f) : (moving < 0 && pos <= 0.3f);
+                    float lenB = trackSwitch.B.Spline.Length;
+                    bool leaving = trackSwitch.BAtEnd ? (moving > 0 && position >= lenB - 0.3f) : (moving < 0 && position <= 0.3f);
                     if (!leaving) continue;
                     // trailing out of the branch onto the main line (the points are pushed over)
-                    int alongA = -sw.DirA;
-                    if (!sw.Diverging) { sw.Diverging = true; RailwayManager.SaveSwitch(sw.Id, true); UpdateLook(sw, false); }
-                    Move(t, sw.A, sw.S + alongA * 0.3f, alongA * run);
-                    return sw.A;
+                    int alongA = -trackSwitch.DirA;
+                    if (!trackSwitch.Diverging) { trackSwitch.Diverging = true; RailwayManager.SaveSwitch(trackSwitch.Id, true); UpdateLook(trackSwitch, false); }
+                    Move(liveTrain, trackSwitch.A, trackSwitch.S + alongA * 0.3f, alongA * run);
+                    return trackSwitch.A;
                 }
             }
             return null;
         }
 
         /// Puts the train on another line at spline metres `pos`, standing with `facing`.
-        static void Move(LiveTrain t, BuiltTrack to, float pos, int facing)
+        static void Move(LiveTrain liveTrain, BuiltTrack destinationTrack, float position, int facing)
         {
-            var sc = t.Train.m_SplineController;
-            sc.Spline = to.Spline;
-            sc.Position = Mathf.Clamp(pos, 0.05f, to.Spline.Length - 0.05f);
-            t.Sim.S.Facing = facing >= 0 ? 1 : -1;
-            t.Sim.EnforceFacing();
-            t.RouteId = to.Id;
-            SteamRailwayMod.Debug($"Train {t.Guid} switched onto {to.Id} at {sc.Position:F1} m.");
+            var splineController = liveTrain.Train.m_SplineController;
+            splineController.Spline = destinationTrack.Spline;
+            splineController.Position = Mathf.Clamp(position, 0.05f, destinationTrack.Spline.Length - 0.05f);
+            liveTrain.Sim.S.Facing = facing >= 0 ? 1 : -1;
+            liveTrain.Sim.EnforceFacing();
+            liveTrain.RouteId = destinationTrack.Id;
+            SteamRailwayMod.Debug($"Train {liveTrain.Guid} switched onto {destinationTrack.Id} at {splineController.Position:F1} m.");
         }
 
         /// The stand belonging to an interaction object (null if it is not one of ours).
-        public static bool IsStand(GameObject go) => go != null && go.name.StartsWith(StandPrefix);
+        public static bool IsStand(GameObject targetObject) => targetObject != null && targetObject.name.StartsWith(StandPrefix);
     }
 }

@@ -15,89 +15,89 @@ namespace SteamRailway
 
         public float Length => m_D.Count > 0 ? m_D[m_D.Count - 1] : 0f;
         public int Count => m_P.Count;
-        public Vector3 this[int i] => m_P[i];
-        public float DistanceAt(int i) => m_D[i];
+        public Vector3 this[int index] => m_P[index];
+        public float DistanceAt(int index) => m_D[index];
 
         public static CurvePath CatmullRom(IList<Vector3> cps)
         {
-            var c = new CurvePath();
-            int n = cps.Count;
-            for (int i = 0; i < n - 1; i++)
+            var curve = new CurvePath();
+            int count = cps.Count;
+            for (int index = 0; index < count - 1; index++)
             {
-                Vector3 p1 = cps[i], p2 = cps[i + 1];
-                Vector3 p0 = i > 0 ? cps[i - 1] : p1;            // Curvy's automatic end tangents
-                Vector3 p3 = i + 2 < n ? cps[i + 2] : p2;
-                int steps = Mathf.Max(1, Mathf.CeilToInt(Vector3.Distance(p1, p2) / Step));
-                for (int k = 0; k < steps; k++) c.Add(CR(p0, p1, p2, p3, k / (float)steps));
+                Vector3 endPoint = cps[index], thirdPoint = cps[index + 1];
+                Vector3 startPoint = index > 0 ? cps[index - 1] : endPoint;            // Curvy's automatic end tangents
+                Vector3 fourthPoint = index + 2 < count ? cps[index + 2] : thirdPoint;
+                int steps = Mathf.Max(1, Mathf.CeilToInt(Vector3.Distance(endPoint, thirdPoint) / Step));
+                for (int deepIndex = 0; deepIndex < steps; deepIndex++) curve.Add(CR(startPoint, endPoint, thirdPoint, fourthPoint, deepIndex / (float)steps));
             }
-            c.Add(cps[n - 1]);
-            c.BuildTangents();
-            return c;
+            curve.Add(cps[count - 1]);
+            curve.BuildTangents();
+            return curve;
         }
 
-        static Vector3 CR(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
+        static Vector3 CR(Vector3 startPoint, Vector3 endPoint, Vector3 thirdPoint, Vector3 fourthPoint, float fraction)
         {
-            float t2 = t * t, t3 = t2 * t;
-            return 0.5f * (2f * p1 + (p2 - p0) * t + (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 + (3f * p1 - p0 - 3f * p2 + p3) * t3);
+            float t2 = fraction * fraction, t3 = t2 * fraction;
+            return 0.5f * (2f * endPoint + (thirdPoint - startPoint) * fraction + (2f * startPoint - 5f * endPoint + 4f * thirdPoint - fourthPoint) * t2 + (3f * endPoint - startPoint - 3f * thirdPoint + fourthPoint) * t3);
         }
 
-        void Add(Vector3 p)
+        void Add(Vector3 point)
         {
-            if (m_P.Count > 0 && Vector3.Distance(m_P[m_P.Count - 1], p) < 0.01f) return;
-            m_D.Add(m_P.Count == 0 ? 0f : m_D[m_D.Count - 1] + Vector3.Distance(m_P[m_P.Count - 1], p));
-            m_P.Add(p);
+            if (m_P.Count > 0 && Vector3.Distance(m_P[m_P.Count - 1], point) < 0.01f) return;
+            m_D.Add(m_P.Count == 0 ? 0f : m_D[m_D.Count - 1] + Vector3.Distance(m_P[m_P.Count - 1], point));
+            m_P.Add(point);
         }
 
         void BuildTangents()
         {
-            int n = m_P.Count;
-            m_T = new Vector3[n];
-            for (int i = 0; i < n; i++)
+            int count = m_P.Count;
+            m_T = new Vector3[count];
+            for (int index = 0; index < count; index++)
             {
-                var a = m_P[Mathf.Max(0, i - 1)];
-                var b = m_P[Mathf.Min(n - 1, i + 1)];
-                m_T[i] = (b - a).normalized;
+                var start = m_P[Mathf.Max(0, index - 1)];
+                var end = m_P[Mathf.Min(count - 1, index + 1)];
+                m_T[index] = (end - start).normalized;
             }
         }
 
-        public void Sample(float s, out Vector3 pos, out Vector3 tangent)
+        public void Sample(float arcLength, out Vector3 position, out Vector3 tangent)
         {
-            s = Mathf.Clamp(s, 0f, Length);
-            int lo = 0, hi = m_D.Count - 1;
-            while (hi - lo > 1)
+            arcLength = Mathf.Clamp(arcLength, 0f, Length);
+            int lower = 0, upper = m_D.Count - 1;
+            while (upper - lower > 1)
             {
-                int mid = (lo + hi) >> 1;
-                if (m_D[mid] <= s) lo = mid; else hi = mid;
+                int mid = (lower + upper) >> 1;
+                if (m_D[mid] <= arcLength) lower = mid; else upper = mid;
             }
-            float seg = m_D[hi] - m_D[lo];
-            float t = seg > 1e-5f ? (s - m_D[lo]) / seg : 0f;
-            pos = Vector3.Lerp(m_P[lo], m_P[hi], t);
+            float segmentLength = m_D[upper] - m_D[lower];
+            float fraction = segmentLength > 1e-5f ? (arcLength - m_D[lower]) / segmentLength : 0f;
+            position = Vector3.Lerp(m_P[lower], m_P[upper], fraction);
             // turning smoothly between the samples (a per-segment direction kinks bent rails)
-            tangent = m_T != null ? Vector3.Lerp(m_T[lo], m_T[hi], t).normalized : (m_P[hi] - m_P[lo]).normalized;
+            tangent = m_T != null ? Vector3.Lerp(m_T[lower], m_T[upper], fraction).normalized : (m_P[upper] - m_P[lower]).normalized;
         }
 
         /// Distance along the curve of the point closest to p in 3D (lines crossing at different heights).
-        public float NearestDistance3D(Vector3 p, out float distance)
+        public float NearestDistance3D(Vector3 point, out float distance)
         {
             float best = float.MaxValue, bestS = 0f;
-            for (int i = 0; i < m_P.Count; i++)
+            for (int index = 0; index < m_P.Count; index++)
             {
-                float d = (m_P[i] - p).sqrMagnitude;
-                if (d < best) { best = d; bestS = m_D[i]; }
+                float d = (m_P[index] - point).sqrMagnitude;
+                if (d < best) { best = d; bestS = m_D[index]; }
             }
             distance = Mathf.Sqrt(best);
             return bestS;
         }
 
         /// Distance along the curve of the point closest to p (horizontal distance).
-        public float NearestDistance(Vector3 p, out float horizontalDistance)
+        public float NearestDistance(Vector3 point, out float horizontalDistance)
         {
             float best = float.MaxValue, bestS = 0f;
-            for (int i = 0; i < m_P.Count; i++)
+            for (int index = 0; index < m_P.Count; index++)
             {
-                float dx = m_P[i].x - p.x, dz = m_P[i].z - p.z;
-                float d = dx * dx + dz * dz;
-                if (d < best) { best = d; bestS = m_D[i]; }
+                float deltaX = m_P[index].x - point.x, deltaZ = m_P[index].z - point.z;
+                float distance = deltaX * deltaX + deltaZ * deltaZ;
+                if (distance < best) { best = distance; bestS = m_D[index]; }
             }
             horizontalDistance = Mathf.Sqrt(best);
             return bestS;
@@ -136,36 +136,36 @@ namespace SteamRailway
 
         /// The full 33.5 m straight piece. The game has other meshes with the same name (a short broken piece
         /// modelled along x), so the geometry decides, not the name.
-        static bool IsFullStraight(Mesh m)
+        static bool IsFullStraight(Mesh mesh)
         {
-            if (m == null || !m.isReadable) return false;
-            var b = m.bounds;
-            return b.size.z > 32f && b.size.z < 35f && b.size.x > 2.5f && b.size.x < 3.5f && b.max.z < 1f;
+            if (mesh == null || !mesh.isReadable) return false;
+            var otherBounds = mesh.bounds;
+            return otherBounds.size.z > 32f && otherBounds.size.z < 35f && otherBounds.size.x > 2.5f && otherBounds.size.x < 3.5f && otherBounds.max.z < 1f;
         }
 
         public static bool Ensure()
         {
-            bool ok = s_Src != null && s_Mats != null;
-            if (ok)
-                for (int i = 0; i < s_Src.Length && ok; i++)
+            bool succeeded = s_Src != null && s_Mats != null;
+            if (succeeded)
+                for (int index = 0; index < s_Src.Length && succeeded; index++)
                 {
-                    if (s_Src[i] == null) ok = false;
-                    else foreach (var mat in s_Mats[i]) if (mat == null) { ok = false; break; }
+                    if (s_Src[index] == null) succeeded = false;
+                    else foreach (var material in s_Mats[index]) if (material == null) { succeeded = false; break; }
                 }
-            if (ok) return true;
+            if (succeeded) return true;
             s_Src = new Mesh[MeshNames.Length];
-            foreach (var m in Resources.FindObjectsOfTypeAll<Mesh>())
-                for (int i = 0; i < MeshNames.Length; i++)
-                    if (m.name == MeshNames[i] && IsFullStraight(m)) s_Src[i] = m;
+            foreach (var mesh in Resources.FindObjectsOfTypeAll<Mesh>())
+                for (int index = 0; index < MeshNames.Length; index++)
+                    if (mesh.name == MeshNames[index] && IsFullStraight(mesh)) s_Src[index] = mesh;
             Material mix = null, green = null;
-            foreach (var m in Resources.FindObjectsOfTypeAll<Material>())
+            foreach (var material in Resources.FindObjectsOfTypeAll<Material>())
             {
-                if (m.name == "GLB_MixBig_C05") mix = m;
-                else if (m.name == "GLB_Green_A05") green = m;
+                if (material.name == "GLB_MixBig_C05") mix = material;
+                else if (material.name == "GLB_Green_A05") green = material;
             }
             // the layer the region's own rail pieces are on (footsteps, what the player can stand on)
-            foreach (var t in Resources.FindObjectsOfTypeAll<Transform>())
-                if (t.gameObject.scene.name != null && t.name.StartsWith("OBJ_RailTrackStraitA_Prefab")) { s_Layer = t.gameObject.layer; break; }
+            foreach (var transform in Resources.FindObjectsOfTypeAll<Transform>())
+                if (transform.gameObject.scene.name != null && transform.name.StartsWith("OBJ_RailTrackStraitA_Prefab")) { s_Layer = transform.gameObject.layer; break; }
             if (s_Src[0] == null || green == null)
             {
                 SteamRailwayMod.Log.Warning("The game's rail meshes are not loaded in this region; rails cannot be laid.");
@@ -173,11 +173,11 @@ namespace SteamRailway
                 return false;
             }
             s_Mats = new Material[MeshNames.Length][];
-            for (int i = 0; i < MeshNames.Length; i++)
+            for (int index = 0; index < MeshNames.Length; index++)
             {
-                var src = s_Src[i] ?? s_Src[0];
-                s_Src[i] = src;
-                s_Mats[i] = src.subMeshCount >= 2 ? new[] { mix ?? green, green } : new[] { green };
+                var sourceMesh = s_Src[index] ?? s_Src[0];
+                s_Src[index] = sourceMesh;
+                s_Mats[index] = sourceMesh.subMeshCount >= 2 ? new[] { mix ?? green, green } : new[] { green };
             }
             return true;
         }
@@ -189,59 +189,59 @@ namespace SteamRailway
         /// Lays rail along [s0, s1] of the path at the game's sleeper pitch: the sleepers are spaced evenly from the
         /// last sleeper before the gap to the first one after it (barely stretched), the rails cut exactly at both ends.
         /// Long gaps get several copies of the piece one after another.
-        public static void Lay(Transform parent, CurvePath path, float s0, float s1, LayOptions o = null)
+        public static void Lay(Transform parent, CurvePath path, float startArc, float endArc, LayOptions options = null)
         {
-            if (o != null && o.Parent != null) parent = o.Parent;
-            float gap = s1 - s0;
+            if (options != null && options.Parent != null) parent = options.Parent;
+            float gap = endArc - startArc;
             if (gap < 0.4f || !Ensure()) return;
             float span = gap + SleeperLastToEnd + SleeperFirst;
-            int k = Mathf.Max(0, Mathf.RoundToInt(span / SleeperPitch) - 1);   // sleepers inside the gap
-            float d = span / (k + 1);                                          // their spacing
-            float stretch = d / SleeperPitch;
+            int deepIndex = Mathf.Max(0, Mathf.RoundToInt(span / SleeperPitch) - 1);   // sleepers inside the gap
+            float distance = span / (deepIndex + 1);                                          // their spacing
+            float stretch = distance / SleeperPitch;
             // source sleeper 1 becomes the first sleeper in the gap, at d - 0.41 m past s0
             float src1 = SleeperFirst + SleeperPitch;
-            float srcOffset = src1 - (d - SleeperLastToEnd) / stretch;
+            float srcOffset = src1 - (distance - SleeperLastToEnd) / stretch;
             for (int m = 0; m < 400; m++)
             {
                 float off = srcOffset - m * SrcLength;          // copy m continues where copy m-1 ended
-                float lo = -off * stretch, hi = (SrcLength - off) * stretch;
-                if (lo >= gap) break;
-                if (hi <= 0f) continue;
+                float lowerValue = -off * stretch, upperValue = (SrcLength - off) * stretch;
+                if (lowerValue >= gap) break;
+                if (upperValue <= 0f) continue;
                 // only the copies at the two ends need cutting
-                Piece(parent, path, s0, stretch, off, lo < 0f ? 0f : float.MinValue, hi > gap ? gap : float.MaxValue, o);
+                Piece(parent, path, startArc, stretch, off, lowerValue < 0f ? 0f : float.MinValue, upperValue > gap ? gap : float.MaxValue, options);
             }
         }
 
         /// One piece: source metres u (from the piece start) map to path distance start + (u - srcOffset) * stretch,
         /// cut to [clipLo, clipHi] (in metres past start).
-        static void Piece(Transform parent, CurvePath path, float start, float stretch, float srcOffset, float clipLo, float clipHi, LayOptions o)
+        static void Piece(Transform parent, CurvePath path, float start, float stretch, float srcOffset, float clipLo, float clipHi, LayOptions options)
         {
             path.Sample(start + Mathf.Max(0f, -srcOffset * stretch), out var origin, out _);   // near this copy
             float slice = SliceFor(path, start, stretch, srcOffset, clipLo, clipHi);
-            var go = new GameObject("RailPiece");
-            go.transform.SetParent(parent, false);
-            go.transform.position = origin;
+            var targetObject = new GameObject("RailPiece");
+            targetObject.transform.SetParent(parent, false);
+            targetObject.transform.position = origin;
             var lods = new List<LOD>();
             GameObject lastGo = null; Mesh lastMesh = null;
             for (int l = 0; l < s_Src.Length; l++)
             {
-                var mesh = Deform(s_Src[l], path, start, stretch, srcOffset, clipLo, clipHi, origin, o, slice * (1 << l));
+                var mesh = Deform(s_Src[l], path, start, stretch, srcOffset, clipLo, clipHi, origin, options, slice * (1 << l));
                 if (mesh == null) continue;
-                var lgo = new GameObject("LOD" + l);
-                lgo.transform.SetParent(go.transform, false);
-                lgo.layer = s_Layer;
-                lastGo = lgo; lastMesh = mesh;
-                lgo.AddComponent<MeshFilter>().sharedMesh = mesh;
-                var mr = lgo.AddComponent<MeshRenderer>();
-                mr.sharedMaterials = new Il2CppReferenceArray<Material>(s_Mats[l]);
-                lods.Add(new LOD(LodHeights[l], new Il2CppReferenceArray<Renderer>(new Renderer[] { mr })));
+                var lightObject = new GameObject("LOD" + l);
+                lightObject.transform.SetParent(targetObject.transform, false);
+                lightObject.layer = s_Layer;
+                lastGo = lightObject; lastMesh = mesh;
+                lightObject.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var meshRenderer = lightObject.AddComponent<MeshRenderer>();
+                meshRenderer.sharedMaterials = new Il2CppReferenceArray<Material>(s_Mats[l]);
+                lods.Add(new LOD(LodHeights[l], new Il2CppReferenceArray<Renderer>(new Renderer[] { meshRenderer })));
             }
-            if (lods.Count == 0) { Object.Destroy(go); return; }
-            var lg = go.AddComponent<LODGroup>();
-            lg.SetLODs(new Il2CppReferenceArray<LOD>(lods.ToArray()));
-            lg.RecalculateBounds();
+            if (lods.Count == 0) { Object.Destroy(targetObject); return; }
+            var lodGroup = targetObject.AddComponent<LODGroup>();
+            lodGroup.SetLODs(new Il2CppReferenceArray<LOD>(lods.ToArray()));
+            lodGroup.RecalculateBounds();
             // solid like the region's own rails (the simplest level is enough to walk on)
-            go.layer = s_Layer;
+            targetObject.layer = s_Layer;
             if (lastGo != null)
             {
                 try { lastGo.AddComponent<MeshCollider>().sharedMesh = lastMesh; }
@@ -253,29 +253,29 @@ namespace SteamRailway
 
         /// Keeps the part of a polygon with sign * along <= sign * limit (Sutherland-Hodgman against one plane);
         /// vertices made on the cut are appended to the attribute lists.
-        static List<int> ClipPoly(List<int> poly, float limit, float sign, List<Vector3> P, List<Vector3> N,
-                                  List<Vector4> T, List<Vector2> U, List<bool> R, System.Func<int, float> along)
+        static List<int> ClipPoly(List<int> poly, float limit, float sign, List<Vector3> points, List<Vector3> normals,
+                                  List<Vector4> tangents, List<Vector2> U, List<bool> flags, System.Func<int, float> along)
         {
             if (poly.Count < 3 || limit == float.MaxValue || limit == float.MinValue) return poly;
-            var res = new List<int>(poly.Count + 1);
-            for (int e = 0; e < poly.Count; e++)
+            var results = new List<int>(poly.Count + 1);
+            for (int endIndex = 0; endIndex < poly.Count; endIndex++)
             {
-                int p0 = poly[e], p1 = poly[(e + 1) % poly.Count];
+                int p0 = poly[endIndex], p1 = poly[(endIndex + 1) % poly.Count];
                 float a0 = along(p0), a1 = along(p1);
                 bool in0 = sign * a0 <= sign * limit, in1 = sign * a1 <= sign * limit;
-                if (in0) res.Add(p0);
+                if (in0) results.Add(p0);
                 if (in0 != in1)
                 {
-                    float t = (limit - a0) / (a1 - a0);
-                    P.Add(Vector3.Lerp(P[p0], P[p1], t));
-                    N.Add(Vector3.Lerp(N[p0], N[p1], t).normalized);
-                    T.Add(Vector4.Lerp(T[p0], T[p1], t));
-                    U.Add(Vector2.Lerp(U[p0], U[p1], t));
-                    R.Add(R[p0]);
-                    res.Add(P.Count - 1);
+                    float fraction = (limit - a0) / (a1 - a0);
+                    points.Add(Vector3.Lerp(points[p0], points[p1], fraction));
+                    normals.Add(Vector3.Lerp(normals[p0], normals[p1], fraction).normalized);
+                    tangents.Add(Vector4.Lerp(tangents[p0], tangents[p1], fraction));
+                    U.Add(Vector2.Lerp(U[p0], U[p1], fraction));
+                    flags.Add(flags[p0]);
+                    results.Add(points.Count - 1);
                 }
             }
-            return res;
+            return results;
         }
 
         /// The source mesh copied out of Il2Cpp once (reading it element by element through interop is slow).
@@ -287,20 +287,20 @@ namespace SteamRailway
         }
         static readonly Dictionary<int, SrcData> s_Data = new Dictionary<int, SrcData>();
 
-        static SrcData DataOf(Mesh src)
+        static SrcData DataOf(Mesh sourceMesh)
         {
-            int id = src.GetInstanceID();
-            if (s_Data.TryGetValue(id, out var d)) return d;
+            int identifier = sourceMesh.GetInstanceID();
+            if (s_Data.TryGetValue(identifier, out var d)) return d;
             d = new SrcData();
-            d.V = src.vertices; var n = src.normals; var t = src.tangents; var u = src.uv;
+            d.V = sourceMesh.vertices; var n = sourceMesh.normals; var t = sourceMesh.tangents; var u = sourceMesh.uv;
             d.HasN = n.Length == d.V.Length; d.HasT = t.Length == d.V.Length; d.HasUv = u.Length == d.V.Length;
             d.N = d.HasN ? (Vector3[])n : null; d.T = d.HasT ? (Vector4[])t : null; d.U = d.HasUv ? (Vector2[])u : null;
-            d.Tris = new int[src.subMeshCount][];
-            for (int s = 0; s < src.subMeshCount; s++) d.Tris[s] = src.GetTriangles(s);
+            d.Tris = new int[sourceMesh.subMeshCount][];
+            for (int s = 0; s < sourceMesh.subMeshCount; s++) d.Tris[s] = sourceMesh.GetTriangles(s);
             d.Rail = new bool[d.V.Length];
-            if (src.subMeshCount >= 2) foreach (var k in d.Tris[0]) d.Rail[k] = true;
-            else for (int k = 0; k < d.V.Length; k++) d.Rail[k] = d.V[k].y > 0.29f;
-            s_Data[id] = d;
+            if (sourceMesh.subMeshCount >= 2) foreach (var deepIndex in d.Tris[0]) d.Rail[deepIndex] = true;
+            else for (int deepIndex = 0; deepIndex < d.V.Length; deepIndex++) d.Rail[deepIndex] = d.V[deepIndex].y > 0.29f;
+            s_Data[identifier] = d;
             return d;
         }
 
@@ -312,20 +312,20 @@ namespace SteamRailway
         /// a straight stretch is not cut at all.
         static float SliceFor(CurvePath path, float start, float stretch, float srcOffset, float clipLo, float clipHi)
         {
-            float a = start + Mathf.Max(-srcOffset * stretch, clipLo > float.MinValue ? clipLo : float.MinValue);
-            float b = start + Mathf.Min((SrcLength - srcOffset) * stretch, clipHi < float.MaxValue ? clipHi : float.MaxValue);
-            a = Mathf.Clamp(a, 0f, path.Length); b = Mathf.Clamp(b, 0f, path.Length);
-            if (b - a < 0.5f) return 1000f;
+            float firstValue = start + Mathf.Max(-srcOffset * stretch, clipLo > float.MinValue ? clipLo : float.MinValue);
+            float secondValue = start + Mathf.Min((SrcLength - srcOffset) * stretch, clipHi < float.MaxValue ? clipHi : float.MaxValue);
+            firstValue = Mathf.Clamp(firstValue, 0f, path.Length); secondValue = Mathf.Clamp(secondValue, 0f, path.Length);
+            if (secondValue - firstValue < 0.5f) return 1000f;
             float turn = 0f;
-            path.Sample(a, out _, out var t0);
-            const int n = 8;
-            for (int k = 1; k <= n; k++)
+            path.Sample(firstValue, out _, out var t0);
+            const int count = 8;
+            for (int deepIndex = 1; deepIndex <= count; deepIndex++)
             {
-                path.Sample(Mathf.Lerp(a, b, k / (float)n), out _, out var t1);
+                path.Sample(Mathf.Lerp(firstValue, secondValue, deepIndex / (float)count), out _, out var t1);
                 var f0 = new Vector3(t0.x, 0f, t0.z); var f1 = new Vector3(t1.x, 0f, t1.z);
-                turn = Mathf.Max(turn, Vector3.Angle(f0, f1) / ((b - a) / n));   // degrees per metre
+                turn = Mathf.Max(turn, Vector3.Angle(f0, f1) / ((secondValue - firstValue) / count));   // degrees per metre
                 // a change of grade bends the rails too
-                turn = Mathf.Max(turn, Mathf.Abs(Mathf.Asin(Mathf.Clamp(t1.y, -1f, 1f)) - Mathf.Asin(Mathf.Clamp(t0.y, -1f, 1f))) * Mathf.Rad2Deg / ((b - a) / n));
+                turn = Mathf.Max(turn, Mathf.Abs(Mathf.Asin(Mathf.Clamp(t1.y, -1f, 1f)) - Mathf.Asin(Mathf.Clamp(t0.y, -1f, 1f))) * Mathf.Rad2Deg / ((secondValue - firstValue) / count));
                 t0 = t1;
             }
             if (turn < 0.01f) return 1000f;
@@ -334,132 +334,132 @@ namespace SteamRailway
         }
         const float SleeperEndFrom = 1.05f, SleeperEndTo = 1.50f;   // |x| of the sleeper ends that are lengthened
 
-        static Mesh Deform(Mesh src, CurvePath path, float start, float stretch, float srcOffset, float clipLo, float clipHi, Vector3 origin, LayOptions o, float slice)
+        static Mesh Deform(Mesh sourceMesh, CurvePath path, float start, float stretch, float srcOffset, float clipLo, float clipHi, Vector3 origin, LayOptions options, float slice)
         {
-            var data = DataOf(src);
-            var sv = data.V; var sn = data.N; var st = data.T; var suv = data.U;
-            int n0 = sv.Length;
+            var data = DataOf(sourceMesh);
+            var vertices = data.V; var normals = data.N; var tangents = data.T; var uvs = data.U;
+            int n0 = vertices.Length;
             bool hasN = data.HasN, hasT = data.HasT, hasUv = data.HasUv;
 
             // source attributes (new vertices are added where triangles are cut at the clip distance)
-            var P = new List<Vector3>(n0); var N = new List<Vector3>(n0); var T = new List<Vector4>(n0); var U = new List<Vector2>(n0);
-            var R = new List<bool>(n0);    // rail vertex (bent with the line) or sleeper vertex (kept rigid)
-            for (int i = 0; i < n0; i++)
+            var points = new List<Vector3>(n0); var N = new List<Vector3>(n0); var T = new List<Vector4>(n0); var U = new List<Vector2>(n0);
+            var flags = new List<bool>(n0);    // rail vertex (bent with the line) or sleeper vertex (kept rigid)
+            for (int index = 0; index < n0; index++)
             {
-                P.Add(sv[i]);
-                R.Add(data.Rail[i]);
-                N.Add(hasN ? sn[i] : Vector3.up);
-                T.Add(hasT ? st[i] : new Vector4(1, 0, 0, 1));
-                U.Add(hasUv ? suv[i] : Vector2.zero);
+                points.Add(vertices[index]);
+                flags.Add(data.Rail[index]);
+                N.Add(hasN ? normals[index] : Vector3.up);
+                T.Add(hasT ? tangents[index] : new Vector4(1, 0, 0, 1));
+                U.Add(hasUv ? uvs[index] : Vector2.zero);
             }
-            float Along(int k) => (SrcZ0 - P[k].z - srcOffset) * stretch;
+            float Along(int deepIndex) => (SrcZ0 - points[deepIndex].z - srcOffset) * stretch;
             bool clips = clipLo > float.MinValue || clipHi < float.MaxValue;
 
             var subs = new List<List<int>>();
             int kept = 0;
-            bool filter = o != null && (!o.Rails || !o.Sleepers || o.RailSide != 0);
-            bool split = src.subMeshCount >= 2;
-            for (int s = 0; s < src.subMeshCount; s++)
+            bool filter = options != null && (!options.Rails || !options.Sleepers || options.RailSide != 0);
+            bool split = sourceMesh.subMeshCount >= 2;
+            for (int s = 0; s < sourceMesh.subMeshCount; s++)
             {
                 var tris = data.Tris[s];
                 var outTris = new List<int>(tris.Length);
-                for (int i = 0; i + 2 < tris.Length; i += 3)
+                for (int index = 0; index + 2 < tris.Length; index += 3)
                 {
-                    int a = tris[i], b = tris[i + 1], c = tris[i + 2];
-                    var cen = (sv[a] + sv[b] + sv[c]) / 3f;
+                    int a = tris[index], b = tris[index + 1], c = tris[index + 2];
+                    var cen = (vertices[a] + vertices[b] + vertices[c]) / 3f;
                     bool rail = split ? s == 0 : cen.y > RailMinY;
                     if (filter)
                     {
-                        if (rail ? !o.Rails : !o.Sleepers) continue;
-                        if (rail && o.RailSide != 0 && Mathf.Sign(cen.x - CentreX) != o.RailSide) continue;
+                        if (rail ? !options.Rails : !options.Sleepers) continue;
+                        if (rail && options.RailSide != 0 && Mathf.Sign(cen.x - CentreX) != options.RailSide) continue;
                     }
                     float a0 = Along(a), a1 = Along(b), a2 = Along(c);
-                    float lo = Mathf.Min(a0, Mathf.Min(a1, a2)), hi = Mathf.Max(a0, Mathf.Max(a1, a2));
+                    float lowerValue = Mathf.Min(a0, Mathf.Min(a1, a2)), upperValue = Mathf.Max(a0, Mathf.Max(a1, a2));
                     float mid = start + (a0 + a1 + a2) / 3f;
-                    if (!rail && o?.SleeperKeep != null && !o.SleeperKeep(mid)) continue;
-                    if (rail && hi - lo <= slice && o?.RailKeep != null && !o.RailKeep(mid)) continue;
-                    if (!clips && !(rail && hi - lo > slice)) { outTris.Add(a); outTris.Add(b); outTris.Add(c); continue; }
+                    if (!rail && options?.SleeperKeep != null && !options.SleeperKeep(mid)) continue;
+                    if (rail && upperValue - lowerValue <= slice && options?.RailKeep != null && !options.RailKeep(mid)) continue;
+                    if (!clips && !(rail && upperValue - lowerValue > slice)) { outTris.Add(a); outTris.Add(b); outTris.Add(c); continue; }
                     var poly = new List<int> { a, b, c };
-                    poly = ClipPoly(poly, clipHi, +1f, P, N, T, U, R, Along);
-                    poly = ClipPoly(poly, clipLo, -1f, P, N, T, U, R, Along);
+                    poly = ClipPoly(poly, clipHi, +1f, points, N, T, U, flags, Along);
+                    poly = ClipPoly(poly, clipLo, -1f, points, N, T, U, flags, Along);
                     if (poly.Count < 3) continue;
-                    if (rail && hi - lo > slice)
+                    if (rail && upperValue - lowerValue > slice)
                     {
                         // a long rail face is cut into short slices, so it can follow a bend smoothly
-                        int b0 = Mathf.FloorToInt(Mathf.Max(lo, clips && clipLo > float.MinValue ? clipLo : lo) / slice);
-                        int b1 = Mathf.CeilToInt(Mathf.Min(hi, clips && clipHi < float.MaxValue ? clipHi : hi) / slice);
+                        int b0 = Mathf.FloorToInt(Mathf.Max(lowerValue, clips && clipLo > float.MinValue ? clipLo : lowerValue) / slice);
+                        int b1 = Mathf.CeilToInt(Mathf.Min(upperValue, clips && clipHi < float.MaxValue ? clipHi : upperValue) / slice);
                         for (int band = b0; band < b1; band++)
                         {
-                            if (o?.RailKeep != null && !o.RailKeep(start + (band + 0.5f) * slice)) continue;
-                            var piece = ClipPoly(poly, (band + 1) * slice, +1f, P, N, T, U, R, Along);
-                            piece = ClipPoly(piece, band * slice, -1f, P, N, T, U, R, Along);
-                            for (int k = 1; k + 1 < piece.Count; k++) { outTris.Add(piece[0]); outTris.Add(piece[k]); outTris.Add(piece[k + 1]); }
+                            if (options?.RailKeep != null && !options.RailKeep(start + (band + 0.5f) * slice)) continue;
+                            var piece = ClipPoly(poly, (band + 1) * slice, +1f, points, N, T, U, flags, Along);
+                            piece = ClipPoly(piece, band * slice, -1f, points, N, T, U, flags, Along);
+                            for (int deepIndex = 1; deepIndex + 1 < piece.Count; deepIndex++) { outTris.Add(piece[0]); outTris.Add(piece[deepIndex]); outTris.Add(piece[deepIndex + 1]); }
                         }
                         continue;
                     }
-                    for (int k = 1; k + 1 < poly.Count; k++) { outTris.Add(poly[0]); outTris.Add(poly[k]); outTris.Add(poly[k + 1]); }
+                    for (int deepIndex = 1; deepIndex + 1 < poly.Count; deepIndex++) { outTris.Add(poly[0]); outTris.Add(poly[deepIndex]); outTris.Add(poly[deepIndex + 1]); }
                 }
                 kept += outTris.Count;
                 subs.Add(outTris);
             }
             if (kept == 0) return null;
 
-            int n = P.Count;
-            var v = new Vector3[n];
-            var nn = new Vector3[n];
-            var tt = new Vector4[n];
-            var uv = new Vector2[n];
-            var ext = o?.SleeperExt;
-            var cut = o?.SleeperCut;
-            var yaw = o?.SleeperYaw;
-            float yOff = o != null ? o.YOffset : 0f;
-            for (int i = 0; i < n; i++)
+            int count = points.Count;
+            var v = new Vector3[count];
+            var nn = new Vector3[count];
+            var tt = new Vector4[count];
+            var uv = new Vector2[count];
+            var ext = options?.SleeperExt;
+            var cut = options?.SleeperCut;
+            var yaw = options?.SleeperYaw;
+            float yOff = options != null ? options.YOffset : 0f;
+            for (int index = 0; index < count; index++)
             {
-                var p = P[i];
-                float sPath = start + Along(i);
+                var point = points[index];
+                float sPath = start + Along(index);
                 if (ext != null)
                 {
                     // the sleeper ends on one side reach out under the other track
-                    float e = ext(sPath), dx = p.x - CentreX;
-                    if (e != 0f && Mathf.Sign(dx) == Mathf.Sign(e))
-                        p.x += e * Mathf.Clamp01((Mathf.Abs(dx) - SleeperEndFrom) / (SleeperEndTo - SleeperEndFrom));
+                    float error = ext(sPath), deltaX = point.x - CentreX;
+                    if (error != 0f && Mathf.Sign(deltaX) == Mathf.Sign(error))
+                        point.x += error * Mathf.Clamp01((Mathf.Abs(deltaX) - SleeperEndFrom) / (SleeperEndTo - SleeperEndFrom));
                 }
                 if (cut != null)
                 {
                     // two tracks side by side as they part: each one's sleepers stop at the line between them
-                    float lim = cut(sPath), cdx = p.x - CentreX;
-                    if (lim != 0f && Mathf.Sign(cdx) == Mathf.Sign(lim) && Mathf.Abs(cdx) > Mathf.Abs(lim))
-                        p.x = CentreX + Mathf.Sign(cdx) * Mathf.Abs(lim);
+                    float limit = cut(sPath), cdx = point.x - CentreX;
+                    if (limit != 0f && Mathf.Sign(cdx) == Mathf.Sign(limit) && Mathf.Abs(cdx) > Mathf.Abs(limit))
+                        point.x = CentreX + Mathf.Sign(cdx) * Mathf.Abs(limit);
                 }
-                bool isRail = R[i];
+                bool isRail = flags[index];
                 float du = 0f;   // sleepers: metres along the line from the sleeper's own centre (kept rigid)
                 if (!isRail)
                 {
                     // a sleeper stays a straight block square to the line at its centre; only the rails bend
-                    float u = SrcZ0 - p.z;
+                    float u = SrcZ0 - point.z;
                     int idx = Mathf.RoundToInt((u - SleeperFirst) / SleeperPitch);
                     float uc = SleeperFirst + idx * SleeperPitch;
                     float sCentre = start + (uc - srcOffset) * stretch;
                     du = (sPath - sCentre) / Mathf.Max(0.01f, stretch);
                     sPath = sCentre;
                     // the long sleepers of a turnout fan out between the two tracks
-                    if (yaw != null) du += yaw(sPath) * (p.x - CentreX);
+                    if (yaw != null) du += yaw(sPath) * (point.x - CentreX);
                 }
-                path.Sample(sPath, out var c, out var t);
-                p.y += yOff;
+                path.Sample(sPath, out var center, out var t);
+                point.y += yOff;
                 // piece space: +y up, the track runs along -z; build the same frame on the path
                 var zw = -t;
                 var xw = Vector3.Cross(Vector3.up, zw).normalized;
                 var yw = Vector3.Cross(zw, xw);
-                v[i] = c + xw * (p.x - CentreX) + yw * (p.y - RailTop) + t * du - origin;
-                var q = N[i]; nn[i] = (xw * q.x + yw * q.y + zw * q.z).normalized;
-                var r = T[i]; var d = xw * r.x + yw * r.y + zw * r.z; tt[i] = new Vector4(d.x, d.y, d.z, r.w);
-                uv[i] = U[i];
+                v[index] = center + xw * (point.x - CentreX) + yw * (point.y - RailTop) + t * du - origin;
+                var otherPoint = N[index]; nn[index] = (xw * otherPoint.x + yw * otherPoint.y + zw * otherPoint.z).normalized;
+                var r = T[index]; var direction = xw * r.x + yw * r.y + zw * r.z; tt[index] = new Vector4(direction.x, direction.y, direction.z, r.w);
+                uv[index] = U[index];
             }
 
             var mesh = new Mesh();
-            mesh.name = src.name + "_Bent";
-            if (n > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            mesh.name = sourceMesh.name + "_Bent";
+            if (count > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             mesh.SetVertices(new Il2CppStructArray<Vector3>(v));
             if (hasN) mesh.SetNormals(new Il2CppStructArray<Vector3>(nn));
             if (hasT) mesh.SetTangents(new Il2CppStructArray<Vector4>(tt));
@@ -484,18 +484,18 @@ namespace SteamRailway
         {
             if (path == null || path.Count < 2) return;
             float minX = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxZ = float.MinValue;
-            for (int i = 0; i < path.Count; i++)
+            for (int index = 0; index < path.Count; index++)
             {
-                var p = path[i];
-                minX = Mathf.Min(minX, p.x); maxX = Mathf.Max(maxX, p.x);
-                minZ = Mathf.Min(minZ, p.z); maxZ = Mathf.Max(maxZ, p.z);
+                var point = path[index];
+                minX = Mathf.Min(minX, point.x); maxX = Mathf.Max(maxX, point.x);
+                minZ = Mathf.Min(minZ, point.z); maxZ = Mathf.Max(maxZ, point.z);
             }
             minX -= Outer; minZ -= Outer; maxX += Outer; maxZ += Outer;
 
             foreach (var terrain in Terrain.activeTerrains)
             {
                 try { LowerOn(terrain, path, minX, minZ, maxX, maxZ); }
-                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Lowering snow on {terrain.name} failed: {e.Message}"); }
+                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Lowering snow on {terrain.name} failed: {e}"); }
             }
         }
 
@@ -510,138 +510,138 @@ namespace SteamRailway
         {
             if (path == null || path.Count < 2) return;
             float minX = float.MaxValue, minZ = float.MaxValue, maxX = float.MinValue, maxZ = float.MinValue;
-            for (int i = 0; i < path.Count; i++)
+            for (int index = 0; index < path.Count; index++)
             {
-                var p = path[i];
-                minX = Mathf.Min(minX, p.x); maxX = Mathf.Max(maxX, p.x);
-                minZ = Mathf.Min(minZ, p.z); maxZ = Mathf.Max(maxZ, p.z);
+                var point = path[index];
+                minX = Mathf.Min(minX, point.x); maxX = Mathf.Max(maxX, point.x);
+                minZ = Mathf.Min(minZ, point.z); maxZ = Mathf.Max(maxZ, point.z);
             }
             minX -= FillReach; minZ -= FillReach; maxX += FillReach; maxZ += FillReach;
             foreach (var terrain in Terrain.activeTerrains)
             {
                 try { FillOn(terrain, path, minX, minZ, maxX, maxZ); }
-                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Snow embankment on {terrain.name} failed: {e.Message}"); }
+                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Snow embankment on {terrain.name} failed: {e}"); }
             }
         }
 
         static void FillOn(Terrain terrain, CurvePath path, float minX, float minZ, float maxX, float maxZ)
         {
             var td = terrain.terrainData;
-            var tp = terrain.transform.position;
+            var targetPoint = terrain.transform.position;
             var size = td.size;
-            int res = td.heightmapResolution;
-            float cell = size.x / (res - 1), cellZ = size.z / (res - 1);
-            int x0 = Mathf.Clamp(Mathf.FloorToInt((minX - tp.x) / cell), 0, res - 1);
-            int x1 = Mathf.Clamp(Mathf.CeilToInt((maxX - tp.x) / cell), 0, res - 1);
-            int z0 = Mathf.Clamp(Mathf.FloorToInt((minZ - tp.z) / cellZ), 0, res - 1);
-            int z1 = Mathf.Clamp(Mathf.CeilToInt((maxZ - tp.z) / cellZ), 0, res - 1);
-            int w = x1 - x0 + 1, h = z1 - z0 + 1;
-            if (w <= 1 || h <= 1) return;
+            int resolution = td.heightmapResolution;
+            float cell = size.x / (resolution - 1), cellZ = size.z / (resolution - 1);
+            int startX = Mathf.Clamp(Mathf.FloorToInt((minX - targetPoint.x) / cell), 0, resolution - 1);
+            int endX = Mathf.Clamp(Mathf.CeilToInt((maxX - targetPoint.x) / cell), 0, resolution - 1);
+            int startZ = Mathf.Clamp(Mathf.FloorToInt((minZ - targetPoint.z) / cellZ), 0, resolution - 1);
+            int endZ = Mathf.Clamp(Mathf.CeilToInt((maxZ - targetPoint.z) / cellZ), 0, resolution - 1);
+            int width = endX - startX + 1, height = endZ - startZ + 1;
+            if (width <= 1 || height <= 1) return;
 
-            var best = new float[w * h];
-            var railY = new float[w * h];
-            for (int i = 0; i < best.Length; i++) best[i] = float.MaxValue;
+            var best = new float[width * height];
+            var railY = new float[width * height];
+            for (int index = 0; index < best.Length; index++) best[index] = float.MaxValue;
             const int Stride = 4;
-            for (int i = 0; i < path.Count - 1; i += Stride)
+            for (int index = 0; index < path.Count - 1; index += Stride)
             {
-                var a = path[i];
-                var b = path[Mathf.Min(i + Stride, path.Count - 1)];
-                int ix0 = Mathf.Max(x0, Mathf.FloorToInt((Mathf.Min(a.x, b.x) - FillReach - tp.x) / cell));
-                int ix1 = Mathf.Min(x1, Mathf.CeilToInt((Mathf.Max(a.x, b.x) + FillReach - tp.x) / cell));
-                int iz0 = Mathf.Max(z0, Mathf.FloorToInt((Mathf.Min(a.z, b.z) - FillReach - tp.z) / cellZ));
-                int iz1 = Mathf.Min(z1, Mathf.CeilToInt((Mathf.Max(a.z, b.z) + FillReach - tp.z) / cellZ));
-                var ab = new Vector2(b.x - a.x, b.z - a.z);
-                float len2 = Mathf.Max(ab.sqrMagnitude, 1e-6f);
-                for (int iz = iz0; iz <= iz1; iz++)
-                for (int ix = ix0; ix <= ix1; ix++)
+                var start = path[index];
+                var end = path[Mathf.Min(index + Stride, path.Count - 1)];
+                int firstColumn = Mathf.Max(startX, Mathf.FloorToInt((Mathf.Min(start.x, end.x) - FillReach - targetPoint.x) / cell));
+                int lastColumn = Mathf.Min(endX, Mathf.CeilToInt((Mathf.Max(start.x, end.x) + FillReach - targetPoint.x) / cell));
+                int firstRow = Mathf.Max(startZ, Mathf.FloorToInt((Mathf.Min(start.z, end.z) - FillReach - targetPoint.z) / cellZ));
+                int lastRow = Mathf.Min(endZ, Mathf.CeilToInt((Mathf.Max(start.z, end.z) + FillReach - targetPoint.z) / cellZ));
+                var segment = new Vector2(end.x - start.x, end.z - start.z);
+                float len2 = Mathf.Max(segment.sqrMagnitude, 1e-6f);
+                for (int rowIndex = firstRow; rowIndex <= lastRow; rowIndex++)
+                for (int columnIndex = firstColumn; columnIndex <= lastColumn; columnIndex++)
                 {
-                    var q = new Vector2(tp.x + ix * cell - a.x, tp.z + iz * cellZ - a.z);
-                    float t = Mathf.Clamp01(Vector2.Dot(q, ab) / len2);
-                    float d = (q - ab * t).magnitude;
-                    int idx = (iz - z0) * w + (ix - x0);
-                    if (d < best[idx]) { best[idx] = d; railY[idx] = Mathf.Lerp(a.y, b.y, t); }
+                    var otherPoint2D = new Vector2(targetPoint.x + columnIndex * cell - start.x, targetPoint.z + rowIndex * cellZ - start.z);
+                    float fraction = Mathf.Clamp01(Vector2.Dot(otherPoint2D, segment) / len2);
+                    float distance = (otherPoint2D - segment * fraction).magnitude;
+                    int idx = (rowIndex - startZ) * width + (columnIndex - startX);
+                    if (distance < best[idx]) { best[idx] = distance; railY[idx] = Mathf.Lerp(start.y, end.y, fraction); }
                 }
             }
 
-            var obj = td.GetHeights(x0, z0, w, h);
-            var heights = new Il2CppStructArray<float>(obj.Pointer);
-            if (heights.Length < w * h) return;
+            var heights = HeightmapAccess.Read(td, startX, startZ, width, height);
+
+            if (heights.Length < width * height) return;
             int changed = 0;
-            for (int idx = 0; idx < w * h; idx++)
+            for (int index = 0; index < width * height; index++)
             {
-                float d = best[idx];
-                if (d >= FillReach) continue;
-                float cur = tp.y + heights[idx] * size.y;
-                float bed = railY[idx] - RailPieces.RailTop + BedAboveBase;
-                if (bed - cur > MaxFill || cur >= bed) continue;
-                float want = d <= FillInner ? bed : bed - (d - FillInner) / FillSlope;
-                if (want <= cur) continue;
-                heights[idx] = (want - tp.y) / size.y;
+                float distance = best[index];
+                if (distance >= FillReach) continue;
+                float current = targetPoint.y + heights[index] * size.y;
+                float bed = railY[index] - RailPieces.RailTop + BedAboveBase;
+                if (bed - current > MaxFill || current >= bed) continue;
+                float want = distance <= FillInner ? bed : bed - (distance - FillInner) / FillSlope;
+                if (want <= current) continue;
+                heights[index] = (want - targetPoint.y) / size.y;
                 changed++;
             }
             if (changed == 0) return;
-            td.SetHeights(x0, z0, obj);
+            HeightmapAccess.Write(td, startX, startZ, heights);
             SteamRailwayMod.Debug($"Snow embankment on {terrain.name}: {changed} height samples.");
         }
 
         static void LowerOn(Terrain terrain, CurvePath path, float minX, float minZ, float maxX, float maxZ)
         {
             var td = terrain.terrainData;
-            var tp = terrain.transform.position;
+            var targetPoint = terrain.transform.position;
             var size = td.size;
-            int res = td.heightmapResolution;
-            float cell = size.x / (res - 1), cellZ = size.z / (res - 1);
-            int x0 = Mathf.Clamp(Mathf.FloorToInt((minX - tp.x) / cell), 0, res - 1);
-            int x1 = Mathf.Clamp(Mathf.CeilToInt((maxX - tp.x) / cell), 0, res - 1);
-            int z0 = Mathf.Clamp(Mathf.FloorToInt((minZ - tp.z) / cellZ), 0, res - 1);
-            int z1 = Mathf.Clamp(Mathf.CeilToInt((maxZ - tp.z) / cellZ), 0, res - 1);
-            int w = x1 - x0 + 1, h = z1 - z0 + 1;
-            if (w <= 1 || h <= 1) return;
+            int resolution = td.heightmapResolution;
+            float cell = size.x / (resolution - 1), cellZ = size.z / (resolution - 1);
+            int startX = Mathf.Clamp(Mathf.FloorToInt((minX - targetPoint.x) / cell), 0, resolution - 1);
+            int endX = Mathf.Clamp(Mathf.CeilToInt((maxX - targetPoint.x) / cell), 0, resolution - 1);
+            int startZ = Mathf.Clamp(Mathf.FloorToInt((minZ - targetPoint.z) / cellZ), 0, resolution - 1);
+            int endZ = Mathf.Clamp(Mathf.CeilToInt((maxZ - targetPoint.z) / cellZ), 0, resolution - 1);
+            int width = endX - startX + 1, height = endZ - startZ + 1;
+            if (width <= 1 || height <= 1) return;
 
             // nearest track segment for every height sample in the box
-            var best = new float[w * h];
-            var railY = new float[w * h];
-            for (int i = 0; i < best.Length; i++) best[i] = float.MaxValue;
+            var best = new float[width * height];
+            var railY = new float[width * height];
+            for (int index = 0; index < best.Length; index++) best[index] = float.MaxValue;
             const int Stride = 4;   // 2 m segments
-            for (int i = 0; i < path.Count - 1; i += Stride)
+            for (int index = 0; index < path.Count - 1; index += Stride)
             {
-                var a = path[i];
-                var b = path[Mathf.Min(i + Stride, path.Count - 1)];
-                int ix0 = Mathf.Max(x0, Mathf.FloorToInt((Mathf.Min(a.x, b.x) - Outer - tp.x) / cell));
-                int ix1 = Mathf.Min(x1, Mathf.CeilToInt((Mathf.Max(a.x, b.x) + Outer - tp.x) / cell));
-                int iz0 = Mathf.Max(z0, Mathf.FloorToInt((Mathf.Min(a.z, b.z) - Outer - tp.z) / cellZ));
-                int iz1 = Mathf.Min(z1, Mathf.CeilToInt((Mathf.Max(a.z, b.z) + Outer - tp.z) / cellZ));
-                var ab = new Vector2(b.x - a.x, b.z - a.z);
-                float len2 = Mathf.Max(ab.sqrMagnitude, 1e-6f);
-                for (int iz = iz0; iz <= iz1; iz++)
-                for (int ix = ix0; ix <= ix1; ix++)
+                var start = path[index];
+                var end = path[Mathf.Min(index + Stride, path.Count - 1)];
+                int firstColumn = Mathf.Max(startX, Mathf.FloorToInt((Mathf.Min(start.x, end.x) - Outer - targetPoint.x) / cell));
+                int lastColumn = Mathf.Min(endX, Mathf.CeilToInt((Mathf.Max(start.x, end.x) + Outer - targetPoint.x) / cell));
+                int firstRow = Mathf.Max(startZ, Mathf.FloorToInt((Mathf.Min(start.z, end.z) - Outer - targetPoint.z) / cellZ));
+                int lastRow = Mathf.Min(endZ, Mathf.CeilToInt((Mathf.Max(start.z, end.z) + Outer - targetPoint.z) / cellZ));
+                var segment = new Vector2(end.x - start.x, end.z - start.z);
+                float len2 = Mathf.Max(segment.sqrMagnitude, 1e-6f);
+                for (int rowIndex = firstRow; rowIndex <= lastRow; rowIndex++)
+                for (int columnIndex = firstColumn; columnIndex <= lastColumn; columnIndex++)
                 {
-                    var q = new Vector2(tp.x + ix * cell - a.x, tp.z + iz * cellZ - a.z);
-                    float t = Mathf.Clamp01(Vector2.Dot(q, ab) / len2);
-                    float d = (q - ab * t).magnitude;
-                    int idx = (iz - z0) * w + (ix - x0);
-                    if (d < best[idx]) { best[idx] = d; railY[idx] = Mathf.Lerp(a.y, b.y, t); }
+                    var otherPoint2D = new Vector2(targetPoint.x + columnIndex * cell - start.x, targetPoint.z + rowIndex * cellZ - start.z);
+                    float fraction = Mathf.Clamp01(Vector2.Dot(otherPoint2D, segment) / len2);
+                    float distance = (otherPoint2D - segment * fraction).magnitude;
+                    int idx = (rowIndex - startZ) * width + (columnIndex - startX);
+                    if (distance < best[idx]) { best[idx] = distance; railY[idx] = Mathf.Lerp(start.y, end.y, fraction); }
                 }
             }
 
-            var obj = td.GetHeights(x0, z0, w, h);
-            var heights = new Il2CppStructArray<float>(obj.Pointer);
-            if (heights.Length < w * h) return;
+            var heights = HeightmapAccess.Read(td, startX, startZ, width, height);
+
+            if (heights.Length < width * height) return;
             int changed = 0;
-            for (int idx = 0; idx < w * h; idx++)
+            for (int index = 0; index < width * height; index++)
             {
-                float d = best[idx];
-                if (d >= Outer) continue;
-                float cur = tp.y + heights[idx] * size.y;
-                float target = railY[idx] - RailPieces.RailTop + BedAboveBase;
-                if (cur <= target || cur - target > MaxCut) continue;
-                float k = d <= Inner ? 1f : Mathf.SmoothStep(1f, 0f, (d - Inner) / (Outer - Inner));
-                float y = Mathf.Lerp(cur, target, k);
-                heights[idx] = (y - tp.y) / size.y;
+                float distance = best[index];
+                if (distance >= Outer) continue;
+                float current = targetPoint.y + heights[index] * size.y;
+                float target = railY[index] - RailPieces.RailTop + BedAboveBase;
+                if (current <= target || current - target > MaxCut) continue;
+                float scale = distance <= Inner ? 1f : Mathf.SmoothStep(1f, 0f, (distance - Inner) / (Outer - Inner));
+                float y = Mathf.Lerp(current, target, scale);
+                heights[index] = (y - targetPoint.y) / size.y;
                 changed++;
             }
             if (changed == 0) return;
-            td.SetHeights(x0, z0, obj);
+            HeightmapAccess.Write(td, startX, startZ, heights);
             SteamRailwayMod.Debug($"Snow lowered along the track on {terrain.name}: {changed} height samples.");
         }
     }

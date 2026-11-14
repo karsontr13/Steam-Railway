@@ -117,13 +117,13 @@ namespace SteamRailway
             if (!s_Started)
             {
                 s_Preview = null;
-                var p = snap != null ? snap.P : hit + Vector3.up * (RailAbove + s_Lift);
-                s_Mark.Set(EditorHub.Ring(p, 1.2f, 24), snap != null ? Join : Good);
+                var point = snap != null ? snap.P : hit + Vector3.up * (RailAbove + s_Lift);
+                s_Mark.Set(EditorHub.Ring(point, 1.2f, 24), snap != null ? Join : Good);
                 s_Info = snap == null ? L.T("Başlangıç için sol tık", "Left click to start")
                        : snap.Kind == SnapKind.End ? L.T("Hattın ucundan devam (sol tık)", "Carry on from the line's end (left click)")
                        : L.T("Hattan makasla ayrıl (sol tık)", "Branch off the line with a switch (left click)");
                 s_Warn = "";
-                if (Input.GetMouseButtonDown(0)) Begin(p, snap);
+                if (Input.GetMouseButtonDown(0)) Begin(point, snap);
                 Draw();
                 return;
             }
@@ -142,35 +142,35 @@ namespace SteamRailway
         /// The nearest line within reach of the crosshair: its end or a point on its middle.
         static Snap FindSnap(Vector3 hit)
         {
-            Snap best = null; float bd = SnapDist;
-            foreach (var t in RailwayManager.Tracks)
+            Snap best = null; float bestDistance = SnapDist;
+            foreach (var track in RailwayManager.Tracks)
             {
-                if (t?.Path == null) continue;
-                float s = t.Path.NearestDistance(hit, out float d);
-                if (d >= bd) continue;
-                t.Path.Sample(s, out var p, out var tan);
-                tan.y = 0f; tan.Normalize();
+                if (track?.Path == null) continue;
+                float arcLength = track.Path.NearestDistance(hit, out float distance);
+                if (distance >= bestDistance) continue;
+                track.Path.Sample(arcLength, out var point, out var tangent);
+                tangent.y = 0f; tangent.Normalize();
                 // the line we started from does not catch the crosshair near the start
-                if (s_Started && s_StartSnap != null && s_StartSnap.Track == t && (p - s_Start).magnitude < 12f) continue;
-                var sn = new Snap { Track = t, P = p, Tan = tan };
-                float len = t.Path.Length;
-                if (s < EndZone || s > len - EndZone)
+                if (s_Started && s_StartSnap != null && s_StartSnap.Track == track && (point - s_Start).magnitude < 12f) continue;
+                var snap = new Snap { Track = track, P = point, Tan = tangent };
+                float length = track.Path.Length;
+                if (arcLength < EndZone || arcLength > length - EndZone)
                 {
-                    sn.Kind = SnapKind.End;
-                    bool atEnd = s > len * 0.5f;
-                    sn.P = atEnd ? t.Path[t.Path.Count - 1] : t.Path[0];
-                    sn.Out = atEnd ? tan : -tan;
+                    snap.Kind = SnapKind.End;
+                    bool atEnd = arcLength > length * 0.5f;
+                    snap.P = atEnd ? track.Path[track.Path.Count - 1] : track.Path[0];
+                    snap.Out = atEnd ? tangent : -tangent;
                 }
-                else sn.Kind = SnapKind.Middle;
-                best = sn; bd = d;
+                else snap.Kind = SnapKind.Middle;
+                best = snap; bestDistance = distance;
             }
             return best;
         }
 
-        static void Begin(Vector3 p, Snap snap)
+        static void Begin(Vector3 point, Snap snap)
         {
             s_Started = true;
-            s_Start = p;
+            s_Start = point;
             s_StartSnap = snap;
             s_Done.Clear();
             if (snap == null) { s_Tan = null; s_TanFree = false; }
@@ -180,39 +180,39 @@ namespace SteamRailway
 
         // ------------------------------------------------------------------ the stretch under the crosshair
 
-        static Vector3 Flat(Vector3 v) { v.y = 0f; return v; }
+        static Vector3 Flat(Vector3 vector) { vector.y = 0f; return vector; }
 
         static void Preview(Vector3 hit, Snap snap)
         {
             s_EndSnap = snap;
-            var p0 = s_Start;
-            Vector3 p1;
+            var startPoint = s_Start;
+            Vector3 endPoint;
             Vector3? t1 = null;
             Vector3 chord;
             if (snap != null)
             {
-                p1 = snap.P;
-                chord = Flat(p1 - p0).normalized;
+                endPoint = snap.P;
+                chord = Flat(endPoint - startPoint).normalized;
                 if (snap.Kind == SnapKind.End) t1 = -snap.Out;                         // into the line's end
                 else t1 = snap.Tan * (Vector3.Dot(snap.Tan, chord) >= 0f ? 1f : -1f);   // along the line
             }
             else
             {
-                p1 = hit + Vector3.up * (RailAbove + s_Lift);
-                chord = Flat(p1 - p0).normalized;
+                endPoint = hit + Vector3.up * (RailAbove + s_Lift);
+                chord = Flat(endPoint - startPoint).normalized;
                 if (EditorHub.Shift && s_Tan.HasValue)
                 {
                     // straight on: the crosshair slides along the start direction
                     var t = s_Tan.Value;
                     if (s_TanFree && Vector3.Dot(t, chord) < 0f) t = -t;
-                    float along = Vector3.Dot(Flat(p1 - p0), t);
-                    var q = p0 + t * Mathf.Max(0f, along);
-                    q.y = H.TerrainHeight(q, p1.y) + RailAbove + s_Lift;
-                    p1 = q;
-                    chord = Flat(p1 - p0).normalized;
+                    float along = Vector3.Dot(Flat(endPoint - startPoint), t);
+                    var otherPoint = startPoint + t * Mathf.Max(0f, along);
+                    otherPoint.y = H.TerrainHeight(otherPoint, endPoint.y) + RailAbove + s_Lift;
+                    endPoint = otherPoint;
+                    chord = Flat(endPoint - startPoint).normalized;
                 }
             }
-            float len = Flat(p1 - p0).magnitude;
+            float length = Flat(endPoint - startPoint).magnitude;
             Vector3 t0 = chord;
             if (s_Tan.HasValue)
             {
@@ -223,53 +223,53 @@ namespace SteamRailway
             te = Flat(te).normalized;
             s_PrevEndTan = te;
 
-            s_Preview = Curve(p0, p1, t0, te, len, 1f);
+            s_Preview = Curve(startPoint, endPoint, t0, te, length, 1f);
             // checks
             s_Valid = true; s_Warn = "";
-            float r = MinRadiusOf(s_Preview);
-            float grade = len > 0.1f ? (p1.y - p0.y) / len * 100f : 0f;
-            if (len < 3f) { s_Valid = false; s_Warn = L.T("çok kısa", "too short"); }
-            else if (len > MaxStretch) { s_Valid = false; s_Warn = L.T($"bir parça en çok {MaxStretch:F0} m", $"a stretch is at most {MaxStretch:F0} m"); }
-            else if (r < MinRadius) { s_Valid = false; s_Warn = L.T($"viraj çok keskin (en az {MinRadius:F0} m yarıçap)", $"bend too sharp (at least {MinRadius:F0} m radius)"); }
+            float radius = MinRadiusOf(s_Preview);
+            float grade = length > 0.1f ? (endPoint.y - startPoint.y) / length * 100f : 0f;
+            if (length < 3f) { s_Valid = false; s_Warn = L.T("çok kısa", "too short"); }
+            else if (length > MaxStretch) { s_Valid = false; s_Warn = L.T($"bir parça en çok {MaxStretch:F0} m", $"a stretch is at most {MaxStretch:F0} m"); }
+            else if (radius < MinRadius) { s_Valid = false; s_Warn = L.T($"viraj çok keskin (en az {MinRadius:F0} m yarıçap)", $"bend too sharp (at least {MinRadius:F0} m radius)"); }
             else if (Mathf.Abs(grade) > MaxGrade) { s_Valid = false; s_Warn = L.T($"eğim çok dik (en çok %{MaxGrade:F0}; PageUp/PageDown ile yüksekliği ayarla)", $"too steep (at most {MaxGrade:F0}%; set the height with PageUp/PageDown)"); }
             else if (Mathf.Abs(grade) > SteepGrade) s_Warn = L.T("dik eğim: ağır tren zorlanabilir", "steep: a heavy train may struggle");
 
-            string rad = r > 5000f ? L.T("düz", "straight") : $"{r:F0} m";
-            s_Info = L.T($"uzunluk {len:F0} m   yarıçap {rad}   eğim %{grade:F1}   yükseklik {s_Lift:+0.00;-0.00} m   dolgu {(s_Fill ? "açık" : "kapalı")}",
-                         $"length {len:F0} m   radius {rad}   grade {grade:F1}%   height {s_Lift:+0.00;-0.00} m   embankment {(s_Fill ? "on" : "off")}");
+            string rad = radius > 5000f ? L.T("düz", "straight") : $"{radius:F0} m";
+            s_Info = L.T($"uzunluk {length:F0} m   yarıçap {rad}   eğim %{grade:F1}   yükseklik {s_Lift:+0.00;-0.00} m   dolgu {(s_Fill ? "açık" : "kapalı")}",
+                         $"length {length:F0} m   radius {rad}   grade {grade:F1}%   height {s_Lift:+0.00;-0.00} m   embankment {(s_Fill ? "on" : "off")}");
             if (snap != null)
                 s_Info += snap.Kind == SnapKind.End ? L.T("   → hattın ucuna bağlanır", "   → joins the line's end")
                                                     : L.T("   → makasla bağlanır", "   → joins with a switch");
         }
 
         /// Hermite curve in the ground plane, the height rising evenly (a steady grade).
-        static List<Vector3> Curve(Vector3 p0, Vector3 p1, Vector3 t0, Vector3 t1, float len, float step)
+        static List<Vector3> Curve(Vector3 startPoint, Vector3 endPoint, Vector3 t0, Vector3 t1, float length, float step)
         {
-            int n = Mathf.Max(2, Mathf.CeilToInt(len / step) + 1);
-            var res = new List<Vector3>(n);
-            var a = Flat(p0); var b = Flat(p1);
-            var m0 = t0 * len; var m1 = t1 * len;
-            for (int i = 0; i < n; i++)
+            int count = Mathf.Max(2, Mathf.CeilToInt(length / step) + 1);
+            var results = new List<Vector3>(count);
+            var start = Flat(startPoint); var end = Flat(endPoint);
+            var m0 = t0 * length; var m1 = t1 * length;
+            for (int index = 0; index < count; index++)
             {
-                float t = i / (float)(n - 1), t2 = t * t, t3 = t2 * t;
-                var q = (2f * t3 - 3f * t2 + 1f) * a + (t3 - 2f * t2 + t) * m0 + (-2f * t3 + 3f * t2) * b + (t3 - t2) * m1;
-                q.y = Mathf.Lerp(p0.y, p1.y, t);
-                res.Add(q);
+                float fraction = index / (float)(count - 1), t2 = fraction * fraction, t3 = t2 * fraction;
+                var otherPoint = (2f * t3 - 3f * t2 + 1f) * start + (t3 - 2f * t2 + fraction) * m0 + (-2f * t3 + 3f * t2) * end + (t3 - t2) * m1;
+                otherPoint.y = Mathf.Lerp(startPoint.y, endPoint.y, fraction);
+                results.Add(otherPoint);
             }
-            return res;
+            return results;
         }
 
-        static float MinRadiusOf(List<Vector3> p)
+        static float MinRadiusOf(List<Vector3> points)
         {
             float best = float.MaxValue;
-            const int k = 3;
-            for (int i = k; i + k < p.Count; i++)
+            const int deepIndex = 3;
+            for (int index = deepIndex; index + deepIndex < points.Count; index++)
             {
-                var a = Flat(p[i - k]); var b = Flat(p[i]); var c = Flat(p[i + k]);
-                float area2 = Vector3.Cross(b - a, c - a).magnitude;
+                var start = Flat(points[index - deepIndex]); var end = Flat(points[index]); var center = Flat(points[index + deepIndex]);
+                float area2 = Vector3.Cross(end - start, center - start).magnitude;
                 if (area2 < 1e-5f) continue;
-                float r = (b - a).magnitude * (c - b).magnitude * (c - a).magnitude / (2f * area2);
-                best = Mathf.Min(best, r);
+                float radius = (end - start).magnitude * (center - end).magnitude * (center - start).magnitude / (2f * area2);
+                best = Mathf.Min(best, radius);
             }
             return best;
         }
@@ -278,8 +278,8 @@ namespace SteamRailway
 
         static void Lay(string scene)
         {
-            var pts = Resample(s_Preview, Step);
-            s_Done.Add(new Stretch { Pts = pts, PrevStart = s_Start, PrevTan = s_Tan, PrevTanFree = s_TanFree, PrevStartSnap = s_StartSnap });
+            var points = Resample(s_Preview, Step);
+            s_Done.Add(new Stretch { Pts = points, PrevStart = s_Start, PrevTan = s_Tan, PrevTanFree = s_TanFree, PrevStartSnap = s_StartSnap });
             var end = s_Preview[s_Preview.Count - 1];
             var endSnap = s_EndSnap;
             s_Start = end;
@@ -290,14 +290,14 @@ namespace SteamRailway
 
         static List<Vector3> Resample(List<Vector3> src, float step)
         {
-            var res = new List<Vector3> { src[0] };
-            float acc = 0f;
-            for (int i = 1; i < src.Count; i++)
+            var results = new List<Vector3> { src[0] };
+            float accumulator = 0f;
+            for (int index = 1; index < src.Count; index++)
             {
-                acc += Vector3.Distance(src[i - 1], src[i]);
-                if (acc >= step || i == src.Count - 1) { res.Add(src[i]); acc = 0f; }
+                accumulator += Vector3.Distance(src[index - 1], src[index]);
+                if (accumulator >= step || index == src.Count - 1) { results.Add(src[index]); accumulator = 0f; }
             }
-            return res;
+            return results;
         }
 
         static void TakeBack()
@@ -316,11 +316,11 @@ namespace SteamRailway
             if (!s_Started) return;
             if (s_Done.Count == 0) { Reset(); return; }
             var data = new CustomLineData { Id = CustomLines.NextId(scene), Fill = s_Fill };
-            foreach (var st in s_Done)
-                for (int i = 0; i < st.Pts.Count; i++)
+            foreach (var stretch in s_Done)
+                for (int index = 0; index < stretch.Pts.Count; index++)
                 {
-                    if (data.Points.Count > 0 && i == 0) continue;
-                    data.Points.Add(CustomLines.F(st.Pts[i]));
+                    if (data.Points.Count > 0 && index == 0) continue;
+                    data.Points.Add(CustomLines.F(stretch.Pts[index]));
                 }
             var first = s_Done[0];
             if (first.PrevStartSnap != null && first.PrevStartSnap.Kind == SnapKind.Middle) data.Switches.Add(data.Points[0]);
@@ -328,7 +328,7 @@ namespace SteamRailway
             s_Undo.Add(LineEdits.Snapshot(scene));
             CustomLines.Add(scene, data);
             float length = 0f;
-            for (int i = 1; i < data.Points.Count; i++) length += Vector3.Distance(CustomLines.V(data.Points[i - 1]), CustomLines.V(data.Points[i]));
+            for (int index = 1; index < data.Points.Count; index++) length += Vector3.Distance(CustomLines.V(data.Points[index - 1]), CustomLines.V(data.Points[index]));
             Reset();
             CabControls.Message(L.T($"Hat kaydedildi ({length:F0} m); raylar kuruluyor...", $"Line saved ({length:F0} m); laying the rails..."));
             Rebuild();
@@ -338,37 +338,37 @@ namespace SteamRailway
         static void Tunnel(string scene, Vector3 hit)
         {
             if (Tunnels.RemoveNear(scene, hit, 15f)) { CabControls.Message(L.T("Tünel kaldırıldı.", "Tunnel removed.")); return; }
-            if (!LineAt(hit, out var t, out float s)) { CabControls.Message(L.T("Tünel ağzı için nişangâhı rayın üstüne getir.", "Aim at the line where the tunnel mouth should be.")); return; }
-            var cam = EditorHub.Camera();
-            CabControls.Message(Tunnels.PlaceAt(scene, t, s, cam != null ? cam.position : hit));
+            if (!LineAt(hit, out var track, out float arcLength)) { CabControls.Message(L.T("Tünel ağzı için nişangâhı rayın üstüne getir.", "Aim at the line where the tunnel mouth should be.")); return; }
+            var cameraTransform = EditorHub.Camera();
+            CabControls.Message(Tunnels.PlaceAt(scene, track, arcLength, cameraTransform != null ? cameraTransform.position : hit));
         }
 
         /// P on a line: one end of a rail transition (first here, then in the other region); Shift+P deletes one.
         static void Portal(string scene, Vector3 hit)
         {
             if (EditorHub.Shift) { CabControls.Message(CustomPortals.RemoveNear(scene, hit)); return; }
-            if (!LineAt(hit, out var t, out float s)) { CabControls.Message(L.T("Geçiş için nişangâhı rayın üstüne getir.", "Aim at the line for the transition.")); return; }
-            t.Path.Sample(s, out var p, out var tan);
-            tan.y = 0f; tan.Normalize();
-            var cam = EditorHub.Camera();
-            var away = cam != null && Vector3.Dot(tan, p - cam.position) < 0f ? -tan : tan;
-            CabControls.Message(CustomPortals.Mark(scene, p, away));
+            if (!LineAt(hit, out var track, out float arcLength)) { CabControls.Message(L.T("Geçiş için nişangâhı rayın üstüne getir.", "Aim at the line for the transition.")); return; }
+            track.Path.Sample(arcLength, out var point, out var tangent);
+            tangent.y = 0f; tangent.Normalize();
+            var cameraTransform = EditorHub.Camera();
+            var away = cameraTransform != null && Vector3.Dot(tangent, point - cameraTransform.position) < 0f ? -tangent : tangent;
+            CabControls.Message(CustomPortals.Mark(scene, point, away));
         }
 
         static void Delete(string scene, Vector3 hit)
         {
-            var l = CustomLines.Nearest(scene, hit, SnapDist);
-            if (l == null) { CabControls.Message(L.T("Burada çizilmiş bir hat yok (bölgenin kendi hatları silinemez).", "No drawn line here (the region's own lines cannot be deleted).")); return; }
-            if (s_DelId != l.Id || Time.time > s_DelUntil)
+            var customLine = CustomLines.Nearest(scene, hit, SnapDist);
+            if (customLine == null) { CabControls.Message(L.T("Burada çizilmiş bir hat yok (bölgenin kendi hatları silinemez).", "No drawn line here (the region's own lines cannot be deleted).")); return; }
+            if (s_DelId != customLine.Id || Time.time > s_DelUntil)
             {
-                s_DelId = l.Id; s_DelUntil = Time.time + 3f;
-                CabControls.Message(L.T($"{l.Id} silinsin mi? Onay için Del'e tekrar bas.", $"Delete {l.Id}? Press Del again to confirm."));
+                s_DelId = customLine.Id; s_DelUntil = Time.time + 3f;
+                CabControls.Message(L.T($"{customLine.Id} silinsin mi? Onay için Del'e tekrar bas.", $"Delete {customLine.Id}? Press Del again to confirm."));
                 return;
             }
             s_DelId = null;
             s_Undo.Add(LineEdits.Snapshot(scene));
-            CustomLines.Remove(scene, l.Id);
-            CabControls.Message(L.T($"{l.Id} silindi (Ctrl+Z geri getirir).", $"{l.Id} deleted (Ctrl+Z brings it back)."));
+            CustomLines.Remove(scene, customLine.Id);
+            CabControls.Message(L.T($"{customLine.Id} silindi (Ctrl+Z geri getirir).", $"{customLine.Id} deleted (Ctrl+Z brings it back)."));
             Rebuild();
         }
 
@@ -415,42 +415,42 @@ namespace SteamRailway
         static void HideSelection() { s_SelL.Hide(); s_SelR.Hide(); s_BufLine.Hide(); s_DragMark.Hide(); }
 
         /// The nearest built line under the crosshair (any part of it).
-        static bool LineAt(Vector3 hit, out BuiltTrack track, out float s)
+        static bool LineAt(Vector3 hit, out BuiltTrack track, out float arcLength)
         {
             // aimed straight at one of our rails: that line (where lines cross, the one actually aimed at)
-            var cam = EditorHub.Camera();
-            if (cam != null)
+            var cameraTransform = EditorHub.Camera();
+            if (cameraTransform != null)
             {
                 float bestHit = float.MaxValue; BuiltTrack aimed = null; Vector3 at = Vector3.zero;
-                foreach (var h in Physics.RaycastAll(cam.position, cam.forward, 400f, ~0, QueryTriggerInteraction.Ignore))
+                foreach (var h in Physics.RaycastAll(cameraTransform.position, cameraTransform.forward, 400f, ~0, QueryTriggerInteraction.Ignore))
                 {
                     if (h.distance >= bestHit) continue;
-                    for (var x = h.collider.transform; x != null; x = x.parent)
+                    for (var node = h.collider.transform; node != null; node = node.parent)
                     {
-                        if (x.name.StartsWith("CHARACTER_FPSPlayer")) break;
-                        if (!x.name.StartsWith("SteamRailway_Track_")) continue;
-                        string id = x.name.Substring("SteamRailway_Track_".Length);
-                        foreach (var t in RailwayManager.Tracks) if (t != null && t.Id == id) { aimed = t; bestHit = h.distance; at = h.point; }
+                        if (node.name.StartsWith("CHARACTER_FPSPlayer")) break;
+                        if (!node.name.StartsWith("SteamRailway_Track_")) continue;
+                        string identifier = node.name.Substring("SteamRailway_Track_".Length);
+                        foreach (var t in RailwayManager.Tracks) if (t != null && t.Id == identifier) { aimed = t; bestHit = h.distance; at = h.point; }
                         break;
                     }
                 }
                 if (aimed != null)
                 {
                     // nothing solid in front of the rail?
-                    if (!EditorHub.Aim(out var ground) || (ground - cam.position).magnitude + 0.5f >= bestHit)
+                    if (!EditorHub.Aim(out var ground) || (ground - cameraTransform.position).magnitude + 0.5f >= bestHit)
                     {
                         track = aimed;
-                        s = aimed.Path.NearestDistance3D(at, out _);
+                        arcLength = aimed.Path.NearestDistance3D(at, out _);
                         return true;
                     }
                 }
             }
-            track = null; s = 0f; float bd = SnapDist;
+            track = null; arcLength = 0f; float bestDistance = SnapDist;
             foreach (var t in RailwayManager.Tracks)
             {
                 if (t?.Path == null) continue;
-                float ss = t.Path.NearestDistance(hit, out float d);
-                if (d < bd) { bd = d; track = t; s = ss; }
+                float ss = t.Path.NearestDistance(hit, out float distance);
+                if (distance < bestDistance) { bestDistance = distance; track = t; arcLength = ss; }
             }
             return track != null;
         }
@@ -462,19 +462,19 @@ namespace SteamRailway
             bool aimed = EditorHub.Aim(out var hit);
             if (Input.GetMouseButtonDown(1))
             {
-                if (!aimed || !LineAt(hit, out var t, out float s))
+                if (!aimed || !LineAt(hit, out var track, out float arcLength))
                 {
                     CabControls.Message(L.T("Nişangâhta ray yok.", "No line in the crosshair."));
                     return s_SelT != null;
                 }
-                if (s_SelT == null || s_SelB >= 0f || t != s_SelT)
+                if (s_SelT == null || s_SelB >= 0f || track != s_SelT)
                 {
                     ClearSelection();
-                    s_SelT = t; s_SelA = s;
+                    s_SelT = track; s_SelA = arcLength;
                 }
                 else
                 {
-                    s_SelB = s;
+                    s_SelB = arcLength;
                     if (s_SelB < s_SelA) (s_SelA, s_SelB) = (s_SelB, s_SelA);
                     if (s_SelB - s_SelA < 2f) { s_SelB = -1f; CabControls.Message(L.T("Seçim çok kısa.", "Selection too short.")); }
                     else MakeBuffer();
@@ -496,7 +496,7 @@ namespace SteamRailway
                 return true;
             }
 
-            float len = s_SelB - s_SelA;
+            float length = s_SelB - s_SelA;
             if (s_Drag >= 0) { Drag(aimed, hit); }
             else
             {
@@ -505,57 +505,57 @@ namespace SteamRailway
                 if (Input.GetKeyDown(KeyCode.G) && aimed) StartDrag(hit);
                 if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) { Apply(scene); return true; }
             }
-            float r = MinRadiusOf(s_Buf);
-            string rad = r > 5000f ? L.T("düz", "straight") : $"{r:F0} m";
-            s_Info = L.T($"seçili {len:F0} m   en dar viraj {rad}", $"selected {len:F0} m   tightest bend {rad}")
+            float radius = MinRadiusOf(s_Buf);
+            string rad = radius > 5000f ? L.T("düz", "straight") : $"{radius:F0} m";
+            s_Info = L.T($"seçili {length:F0} m   en dar viraj {rad}", $"selected {length:F0} m   tightest bend {rad}")
                    + (s_BufDirty ? L.T("   (değişti: Enter uygular)", "   (changed: Enter applies)") : "")
                    + (s_Drag >= 0 ? L.T($"   etki {s_Reach:F0} m   yükseklik {s_DragLift:+0.00;-0.00} m", $"   reach {s_Reach:F0} m   height {s_DragLift:+0.00;-0.00} m") : "");
-            s_Warn = r < MinRadius ? L.T($"viraj {MinRadius:F0} m'den dar: tren sarsılabilir (N ile yumuşat)", $"bend tighter than {MinRadius:F0} m: the train may lurch (N smooths)") : "";
+            s_Warn = radius < MinRadius ? L.T($"viraj {MinRadius:F0} m'den dar: tren sarsılabilir (N ile yumuşat)", $"bend tighter than {MinRadius:F0} m: the train may lurch (N smooths)") : "";
             return true;
         }
 
         static void MakeBuffer()
         {
             s_Buf = new List<Vector3>();
-            int n = Mathf.Max(2, Mathf.CeilToInt((s_SelB - s_SelA) / BufStep) + 1);
-            for (int i = 0; i < n; i++)
+            int count = Mathf.Max(2, Mathf.CeilToInt((s_SelB - s_SelA) / BufStep) + 1);
+            for (int index = 0; index < count; index++)
             {
-                s_SelT.Path.Sample(Mathf.Lerp(s_SelA, s_SelB, i / (float)(n - 1)), out var p, out _);
-                s_Buf.Add(p);
+                s_SelT.Path.Sample(Mathf.Lerp(s_SelA, s_SelB, index / (float)(count - 1)), out var point, out _);
+                s_Buf.Add(point);
             }
             s_BufDirty = false;
         }
 
         /// The new shape at path metres s (between the selection's ends).
-        static Vector3 ShapeAt(float s)
+        static Vector3 ShapeAt(float arcLength)
         {
-            int n = s_Buf.Count;
-            float f = (s - s_SelA) / Mathf.Max(1e-3f, s_SelB - s_SelA) * (n - 1);
-            int i = Mathf.Clamp(Mathf.FloorToInt(f), 0, n - 2);
-            return Vector3.Lerp(s_Buf[i], s_Buf[i + 1], Mathf.Clamp01(f - i));
+            int count = s_Buf.Count;
+            float factor = (arcLength - s_SelA) / Mathf.Max(1e-3f, s_SelB - s_SelA) * (count - 1);
+            int index = Mathf.Clamp(Mathf.FloorToInt(factor), 0, count - 2);
+            return Vector3.Lerp(s_Buf[index], s_Buf[index + 1], Mathf.Clamp01(factor - index));
         }
 
         /// Softer bends and an even grade; the two ends (and the direction there) stay.
         static void Smooth()
         {
             if (s_Buf == null || s_Buf.Count < 6) return;
-            var tmp = new Vector3[s_Buf.Count];
-            for (int it = 0; it < 8; it++)
+            var buffer = new Vector3[s_Buf.Count];
+            for (int item = 0; item < 8; item++)
             {
-                for (int i = 0; i < s_Buf.Count; i++)
-                    tmp[i] = (i < 2 || i > s_Buf.Count - 3) ? s_Buf[i] : Vector3.Lerp(s_Buf[i], (s_Buf[i - 1] + s_Buf[i + 1]) * 0.5f, 0.5f);
-                for (int i = 0; i < s_Buf.Count; i++) s_Buf[i] = tmp[i];
+                for (int index = 0; index < s_Buf.Count; index++)
+                    buffer[index] = (index < 2 || index > s_Buf.Count - 3) ? s_Buf[index] : Vector3.Lerp(s_Buf[index], (s_Buf[index - 1] + s_Buf[index + 1]) * 0.5f, 0.5f);
+                for (int index = 0; index < s_Buf.Count; index++) s_Buf[index] = buffer[index];
             }
             s_BufDirty = true;
         }
 
         static void StartDrag(Vector3 hit)
         {
-            int best = -1; float bd = 8f * 8f;
-            for (int i = 0; i < s_Buf.Count; i++)
+            int best = -1; float bestDistance = 8f * 8f;
+            for (int index = 0; index < s_Buf.Count; index++)
             {
-                float dx = s_Buf[i].x - hit.x, dz = s_Buf[i].z - hit.z, d = dx * dx + dz * dz;
-                if (d < bd) { bd = d; best = i; }
+                float deltaX = s_Buf[index].x - hit.x, deltaZ = s_Buf[index].z - hit.z, distance = deltaX * deltaX + deltaZ * deltaZ;
+                if (distance < bestDistance) { bestDistance = distance; best = index; }
             }
             if (best < 0) { CabControls.Message(L.T("Nişangâhı seçili rayın üstüne getir.", "Aim at the selected line.")); return; }
             s_Drag = best;
@@ -573,18 +573,18 @@ namespace SteamRailway
             if (Input.GetKeyDown(KeyCode.PageDown)) s_DragLift -= EditorHub.Shift ? 1f : 0.25f;
             if (Input.GetKeyDown(KeyCode.G) || Input.GetMouseButtonDown(0)) { s_Drag = -1; s_BufBase = null; return; }
             if (!aimed) return;
-            var b = s_BufBase[s_Drag];
-            var target = new Vector3(hit.x, b.y + s_DragLift, hit.z);
-            var delta = target - b;
-            int n = s_Buf.Count;
+            var end = s_BufBase[s_Drag];
+            var target = new Vector3(hit.x, end.y + s_DragLift, hit.z);
+            var delta = target - end;
+            int count = s_Buf.Count;
             float sk = s_Drag * BufStep;
-            for (int i = 0; i < n; i++)
+            for (int index = 0; index < count; index++)
             {
-                float si = i * BufStep;
-                float w = Mathf.SmoothStep(0f, 1f, 1f - Mathf.Abs(si - sk) / s_Reach);
+                float si = index * BufStep;
+                float weight = Mathf.SmoothStep(0f, 1f, 1f - Mathf.Abs(si - sk) / s_Reach);
                 // the ends of the selection stay where they are (the line carries on there)
-                w *= Mathf.Clamp01(Mathf.Min(si, (n - 1) * BufStep - si) / 6f);
-                s_Buf[i] = s_BufBase[i] + delta * w;
+                weight *= Mathf.Clamp01(Mathf.Min(si, (count - 1) * BufStep - si) / 6f);
+                s_Buf[index] = s_BufBase[index] + delta * weight;
             }
             s_BufDirty = true;
         }
@@ -617,23 +617,23 @@ namespace SteamRailway
             if (s_SelT == null || s_SelT.Path == null) { HideSelection(); return; }
             if (s_SelB < 0f)
             {
-                s_SelT.Path.Sample(s_SelA, out var p, out _);
-                s_DragMark.Set(EditorHub.Ring(p, 1.5f, 24), SelCol, true);
+                s_SelT.Path.Sample(s_SelA, out var point, out _);
+                s_DragMark.Set(EditorHub.Ring(point, 1.5f, 24), SelCol, true);
                 s_SelL.Hide(); s_SelR.Hide(); s_BufLine.Hide();
                 return;
             }
-            var l = new List<Vector3>(); var r = new List<Vector3>();
-            for (float s = s_SelA; s <= s_SelB + 0.01f; s += 1f)
+            var points = new List<Vector3>(); var results = new List<Vector3>();
+            for (float arcLength = s_SelA; arcLength <= s_SelB + 0.01f; arcLength += 1f)
             {
-                s_SelT.Path.Sample(Mathf.Min(s, s_SelB), out var p, out var t);
+                s_SelT.Path.Sample(Mathf.Min(arcLength, s_SelB), out var point, out var t);
                 var side = Vector3.Cross(Vector3.up, Flat(t)).normalized * (Gauge + 0.15f);
-                l.Add(p - side + Vector3.up * 0.12f); r.Add(p + side + Vector3.up * 0.12f);
+                points.Add(point - side + Vector3.up * 0.12f); results.Add(point + side + Vector3.up * 0.12f);
             }
-            s_SelL.Set(l, SelCol); s_SelR.Set(r, SelCol);
+            s_SelL.Set(points, SelCol); s_SelR.Set(results, SelCol);
             if (s_Buf != null && s_BufDirty)
             {
                 var c = new List<Vector3>(s_Buf.Count);
-                foreach (var p in s_Buf) c.Add(p + Vector3.up * 0.15f);
+                foreach (var point in s_Buf) c.Add(point + Vector3.up * 0.15f);
                 s_BufLine.Set(c, ShapeCol);
             }
             else s_BufLine.Hide();
@@ -647,21 +647,21 @@ namespace SteamRailway
         {
             // laid stretches of the line being drawn
             var laid = new List<Vector3>();
-            foreach (var st in s_Done) foreach (var p in st.Pts) laid.Add(p + Vector3.up * 0.1f);
+            foreach (var stretch in s_Done) foreach (var point in stretch.Pts) laid.Add(point + Vector3.up * 0.1f);
             if (laid.Count >= 2) s_Laid.Set(laid, LaidCol); else s_Laid.Hide();
 
             if (s_Preview == null || s_Preview.Count < 2) { s_RailL.Hide(); s_RailR.Hide(); if (s_Started) s_Mark.Hide(); return; }
-            var l = new List<Vector3>(s_Preview.Count);
-            var r = new List<Vector3>(s_Preview.Count);
-            for (int i = 0; i < s_Preview.Count; i++)
+            var points = new List<Vector3>(s_Preview.Count);
+            var results = new List<Vector3>(s_Preview.Count);
+            for (int index = 0; index < s_Preview.Count; index++)
             {
-                var a = s_Preview[Mathf.Max(0, i - 1)]; var b = s_Preview[Mathf.Min(s_Preview.Count - 1, i + 1)];
-                var side = Vector3.Cross(Vector3.up, Flat(b - a)).normalized * Gauge;
-                var c = s_Preview[i] + Vector3.up * 0.08f;
-                l.Add(c - side); r.Add(c + side);
+                var start = s_Preview[Mathf.Max(0, index - 1)]; var end = s_Preview[Mathf.Min(s_Preview.Count - 1, index + 1)];
+                var side = Vector3.Cross(Vector3.up, Flat(end - start)).normalized * Gauge;
+                var center = s_Preview[index] + Vector3.up * 0.08f;
+                points.Add(center - side); results.Add(center + side);
             }
-            var col = !s_Valid ? Bad : s_EndSnap != null ? Join : Good;
-            s_RailL.Set(l, col); s_RailR.Set(r, col);
+            var color = !s_Valid ? Bad : s_EndSnap != null ? Join : Good;
+            s_RailL.Set(points, color); s_RailR.Set(results, color);
             if (s_EndSnap != null) s_Mark.Set(EditorHub.Ring(s_EndSnap.P, 1.2f, 24), Join); else s_Mark.Hide();
         }
 

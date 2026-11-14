@@ -35,30 +35,30 @@ namespace SteamRailway
         /// returns true when the click was handled 
         public static bool Handle(SteamTrain train, GameObject control, bool alternative)
         {
-            var sim = RailwayManager.GetSim(train);
-            if (sim == null) return false;
-            var s = sim.S;
+            var simulation = RailwayManager.GetSim(train);
+            if (simulation == null) return false;
+            var simState = simulation.S;
             switch (control.name)
             {
                 case Regulator:
                 {
-                    float before = s.Regulator;
-                    sim.RegulatorStep(alternative ? -0.1f : 0.1f);
-                    if (s.Regulator != before && !StoryTrainBank.Post(train, s.Regulator > before ? "Play_SteamTrain_GearLeverUp" : "Play_SteamTrain_GearLeverDown"))
-                        SynthSounds.PlayLever(train, s.Regulator > before ? 1.05f : 0.95f, 0.6f);
+                    float before = simState.Regulator;
+                    simulation.RegulatorStep(alternative ? -0.1f : 0.1f);
+                    if (simState.Regulator != before && !StoryTrainBank.Post(train, simState.Regulator > before ? "Play_SteamTrain_GearLeverUp" : "Play_SteamTrain_GearLeverDown"))
+                        SynthSounds.PlayLever(train, simState.Regulator > before ? 1.05f : 0.95f, 0.6f);
                     break;
                 }
                 case Reverser:
                 {
                     // vlick moves the lever towards forward, alternative click towards reverse
-                    int before = s.Reverser;
-                    sim.SetReverser(Mathf.Clamp(s.Reverser + (alternative ? -1 : 1), -1, 1));
-                    if (s.Reverser != before)
+                    int before = simState.Reverser;
+                    simulation.SetReverser(Mathf.Clamp(simState.Reverser + (alternative ? -1 : 1), -1, 1));
+                    if (simState.Reverser != before)
                     {
-                        if (!StoryTrainBank.Post(train, s.Reverser > before ? "Play_SteamTrain_GearLeverUp" : "Play_SteamTrain_GearLeverDown"))
+                        if (!StoryTrainBank.Post(train, simState.Reverser > before ? "Play_SteamTrain_GearLeverUp" : "Play_SteamTrain_GearLeverDown"))
                             SynthSounds.PlayLever(train, 0.85f, 0.9f);
                     }
-                    else if (Mathf.Abs(sim.Velocity) > 0.5f)
+                    else if (Mathf.Abs(simulation.Velocity) > 0.5f)
                     {
                         StoryTrainBank.Post(train, "Play_SteamTrain_GearLeverLocked");
                         Message(L.T("Yön kolu sadece tren dururken değiştirilebilir.", "The reverser can only be thrown while the train is stopped."));
@@ -66,42 +66,42 @@ namespace SteamRailway
                     break;
                 }
                 case Brake:
-                    s.SteamBrake = !s.SteamBrake;
-                    if (!StoryTrainBank.Post(train, s.SteamBrake ? "Play_SteamTrain_BrakeLeverOn" : "Play_SteamTrain_BrakeLeverOff"))
-                        SynthSounds.PlayLever(train, s.SteamBrake ? 0.92f : 1f, 0.75f);
+                    simState.SteamBrake = !simState.SteamBrake;
+                    if (!StoryTrainBank.Post(train, simState.SteamBrake ? "Play_SteamTrain_BrakeLeverOn" : "Play_SteamTrain_BrakeLeverOff"))
+                        SynthSounds.PlayLever(train, simState.SteamBrake ? 0.92f : 1f, 0.75f);
                     break;
                 case HandBrake:
-                    s.HandBrake = !s.HandBrake;
-                    if (!StoryTrainBank.Post(train, s.HandBrake ? "Play_SteamTrain_BrakeLeverOn" : "Play_SteamTrain_BrakeLeverOff"))
+                    simState.HandBrake = !simState.HandBrake;
+                    if (!StoryTrainBank.Post(train, simState.HandBrake ? "Play_SteamTrain_BrakeLeverOn" : "Play_SteamTrain_BrakeLeverOff"))
                         SynthSounds.PlayValve(train);
                     break;
                 case Injector:
-                    s.Injector = !s.Injector;
+                    simState.Injector = !simState.Injector;
                     SynthSounds.PlayValve(train);
                     break;
                 case Blower:
-                    s.Blower = !s.Blower;
+                    simState.Blower = !simState.Blower;
                     SynthSounds.PlayValve(train);
                     break;
                 case Damper:
-                    Damp(sim);
+                    Damp(simulation);
                     break;
                 case Headlight:
-                    s.Headlight = !s.Headlight;
+                    simState.Headlight = !simState.Headlight;
                     SynthSounds.PlayLever(train, 1.25f, 0.45f);
                     break;
                 case Pump:
-                    TransferMenu.Pump(sim);
+                    TransferMenu.Pump(simulation);
                     break;
                 case Repair:
-                    BoilerRepair.TryRepair(sim);
+                    BoilerRepair.TryRepair(simulation);
                     break;
                 case WaterHatch:
-                    TransferMenu.PourInventory(sim);
+                    TransferMenu.PourInventory(simulation);
                     break;
                 case SnowHatch:
                     if (SteamTrain.IsInsideSteamTrain) return true;
-                    TransferMenu.ShovelSnow(sim);
+                    TransferMenu.ShovelSnow(simulation);
                     break;
                 case PressureGauge:
                 case SpeedGauge:
@@ -116,61 +116,61 @@ namespace SteamRailway
         }
 
         /// keeps the hover texts showing the live state.
-        public static void UpdateHoverTexts(SteamSim sim)
+        public static void UpdateHoverTexts(SteamSim simulation)
         {
-            var R = sim.Train.transform;
-            var s = sim.S;
-            string on = L.T("açık", "open"), off = L.T("kapalı", "closed");
+            var rootTransform = simulation.Train.transform;
+            var simState = simulation.S;
+            string onText = L.T("açık", "open"), off = L.T("kapalı", "closed");
             string applied = L.T("ÇEKİLİ", "ON"), released = L.T("serbest", "off");
-            Set(R, Regulator, L.T("Regülatör", "Regulator") + $": {Mathf.RoundToInt(s.Regulator * 10f)}/10  " +
+            Set(rootTransform, Regulator, L.T("Regülatör", "Regulator") + $": {Mathf.RoundToInt(simState.Regulator * 10f)}/10  " +
                 L.T("(tık: aç, alternatif: kıs)", "(click: open, alternative: close)"));
-            Set(R, Reverser, L.T("Yön kolu: ", "Reverser: ") +
-                (s.Reverser > 0 ? L.T("İLERİ", "FORWARD") : s.Reverser < 0 ? L.T("GERİ", "REVERSE") : L.T("BOŞ", "NEUTRAL")) +
+            Set(rootTransform, Reverser, L.T("Yön kolu: ", "Reverser: ") +
+                (simState.Reverser > 0 ? L.T("İLERİ", "FORWARD") : simState.Reverser < 0 ? L.T("GERİ", "REVERSE") : L.T("BOŞ", "NEUTRAL")) +
                 L.T("  (tık: ileri, alternatif: geri)", "  (click: forward, alternative: reverse)"));
-            Set(R, Brake, L.T("Buhar freni: ", "Steam brake: ") + (s.SteamBrake ? applied : released) +
-                (sim.Pressure < 20f && s.SteamBrake ? L.T("  (basınç yok, tutmuyor)", "  (no pressure, not holding)") : ""));
-            Set(R, HandBrake, L.T("El freni: ", "Hand brake: ") + (s.HandBrake ? applied : released));
-            Set(R, SpeedGauge, L.T("Hız: ", "Speed: ") + (L.Turkish
-                ? $"{Mathf.RoundToInt(Mathf.Abs(sim.Velocity) * 3.6f)} km/s"
-                : $"{Mathf.RoundToInt(Mathf.Abs(sim.Velocity) * 3.6f)} km/h"));
-            Set(R, HeatGauge, L.T("Ocak: ", "Firebox: ") + (sim.FireBurning ? $"{Mathf.RoundToInt(sim.FireboxTemp)} °C" : L.T("sönük", "out")));
-            Set(R, Injector, L.T("Enjektör: ", "Injector: ") + (s.Injector
-                ? (sim.InjectorWorking ? L.T("çalışıyor", "feeding") : L.T("açık (basınç/su yok)", "open (no pressure/water)"))
+            Set(rootTransform, Brake, L.T("Buhar freni: ", "Steam brake: ") + (simState.SteamBrake ? applied : released) +
+                (simulation.Pressure < 20f && simState.SteamBrake ? L.T("  (basınç yok, tutmuyor)", "  (no pressure, not holding)") : ""));
+            Set(rootTransform, HandBrake, L.T("El freni: ", "Hand brake: ") + (simState.HandBrake ? applied : released));
+            Set(rootTransform, SpeedGauge, L.T("Hız: ", "Speed: ") + (L.Turkish
+                ? $"{Mathf.RoundToInt(Mathf.Abs(simulation.Velocity) * 3.6f)} km/s"
+                : $"{Mathf.RoundToInt(Mathf.Abs(simulation.Velocity) * 3.6f)} km/h"));
+            Set(rootTransform, HeatGauge, L.T("Ocak: ", "Firebox: ") + (simulation.FireBurning ? $"{Mathf.RoundToInt(simulation.FireboxTemp)} °C" : L.T("sönük", "out")));
+            Set(rootTransform, Injector, L.T("Enjektör: ", "Injector: ") + (simState.Injector
+                ? (simulation.InjectorWorking ? L.T("çalışıyor", "feeding") : L.T("açık (basınç/su yok)", "open (no pressure/water)"))
                 : off));
-            Set(R, Blower, "Blower: " + (s.Blower ? on : off));
-            Set(R, Damper, !sim.FireBurning
+            Set(rootTransform, Blower, "Blower: " + (simState.Blower ? onText : off));
+            Set(rootTransform, Damper, !simulation.FireBurning
                 ? L.T("Ocak sürgüsü: ocak zaten sönük", "Damper: the fire is already out")
                 : Time.time < s_DampUntil
                     ? L.T("Ocak sürgüsü: söndürmek için TEKRAR tıkla", "Damper: click AGAIN to put the fire out")
                     : L.T("Ocak sürgüsü: ocağı söndür (kömür boşa yanmaz)", "Damper: put the fire out (no coal burnt in vain)"));
-            Set(R, Headlight, L.T("Farlar: ", "Lamps: ") + (s.Headlight ? L.T("açık", "on") : L.T("kapalı", "off")) +
-                (s.Headlight && !sim.LampsLit ? L.T("  (jeneratör için buhar yok)", "  (no steam for the generator)") : ""));
-            string state = s.Exploded ? L.T("  — KAZAN PATLAMIŞ", "  — BOILER BURST")
-                : s.PlugBlown ? L.T("  — TAPA ERİMİŞ", "  — PLUG MELTED")
-                : sim.SafetyValveOpen ? L.T("  (emniyet supabı açık)", "  (safety valve lifting)") : "";
+            Set(rootTransform, Headlight, L.T("Farlar: ", "Lamps: ") + (simState.Headlight ? L.T("açık", "on") : L.T("kapalı", "off")) +
+                (simState.Headlight && !simulation.LampsLit ? L.T("  (jeneratör için buhar yok)", "  (no steam for the generator)") : ""));
+            string state = simState.Exploded ? L.T("  — KAZAN PATLAMIŞ", "  — BOILER BURST")
+                : simState.PlugBlown ? L.T("  — TAPA ERİMİŞ", "  — PLUG MELTED")
+                : simulation.SafetyValveOpen ? L.T("  (emniyet supabı açık)", "  (safety valve lifting)") : "";
             string wear = SteamSim.Mode == Realism.Medium
-                ? L.T($"  |  Kazan %{Mathf.RoundToInt(s.BoilerCondition)}, supap %{Mathf.RoundToInt(s.ValveCondition)}",
-                      $"  |  Boiler {Mathf.RoundToInt(s.BoilerCondition)}%, valve {Mathf.RoundToInt(s.ValveCondition)}%")
+                ? L.T($"  |  Kazan %{Mathf.RoundToInt(simState.BoilerCondition)}, supap %{Mathf.RoundToInt(simState.ValveCondition)}",
+                      $"  |  Boiler {Mathf.RoundToInt(simState.BoilerCondition)}%, valve {Mathf.RoundToInt(simState.ValveCondition)}%")
                 : "";
-            Set(R, PressureGauge, L.T("Basınç: ", "Pressure: ") + $"{Mathf.RoundToInt(sim.Pressure)} PSI" + state + wear);
-            Set(R, Repair, BoilerRepair.Describe(sim));
-            Set(R, WaterGlass, L.T($"Kazan suyu: %{Mathf.RoundToInt(sim.BoilerLevel * 100f)}", $"Boiler water: {Mathf.RoundToInt(sim.BoilerLevel * 100f)}%") +
-                $"  |  {Mathf.RoundToInt(s.BoilerTemp)} °C");
-            Set(R, TenderGauge, L.T("Su tankı: ", "Water tank: ") + $"{Mathf.RoundToInt(s.TenderWater)} / {SteamSim.TenderCapacity:0} L" +
-                (s.SnowKg > 0f ? L.T($"  (+{Mathf.RoundToInt(s.SnowKg)} kg kar eriyor)", $"  (+{Mathf.RoundToInt(s.SnowKg)} kg snow melting)") : ""));
-            Set(R, Pump, L.T("Su pompası: açık sudan tanka su çek", "Water pump: draw water from open water into the tank"));
-            Set(R, WaterHatch, L.T("Su tankı kapağı: envanterdeki suyu dök", "Water tank filler: pour in your water") +
-                $" ({Mathf.RoundToInt(s.TenderWater)}/{SteamSim.TenderCapacity:0} L)");
-            Set(R, SnowHatch, L.T("Kar küreği: tanka kar at", "Snow shovel: shovel snow into the tank") +
-                $" ({Mathf.RoundToInt(s.SnowKg)}/{SteamSim.SnowCapacityKg:0} kg)");
+            Set(rootTransform, PressureGauge, L.T("Basınç: ", "Pressure: ") + $"{Mathf.RoundToInt(simulation.Pressure)} PSI" + state + wear);
+            Set(rootTransform, Repair, BoilerRepair.Describe(simulation));
+            Set(rootTransform, WaterGlass, L.T($"Kazan suyu: %{Mathf.RoundToInt(simulation.BoilerLevel * 100f)}", $"Boiler water: {Mathf.RoundToInt(simulation.BoilerLevel * 100f)}%") +
+                $"  |  {Mathf.RoundToInt(simState.BoilerTemp)} °C");
+            Set(rootTransform, TenderGauge, L.T("Su tankı: ", "Water tank: ") + $"{Mathf.RoundToInt(simState.TenderWater)} / {SteamSim.TenderCapacity:0} L" +
+                (simState.SnowKg > 0f ? L.T($"  (+{Mathf.RoundToInt(simState.SnowKg)} kg kar eriyor)", $"  (+{Mathf.RoundToInt(simState.SnowKg)} kg snow melting)") : ""));
+            Set(rootTransform, Pump, L.T("Su pompası: açık sudan tanka su çek", "Water pump: draw water from open water into the tank"));
+            Set(rootTransform, WaterHatch, L.T("Su tankı kapağı: envanterdeki suyu dök", "Water tank filler: pour in your water") +
+                $" ({Mathf.RoundToInt(simState.TenderWater)}/{SteamSim.TenderCapacity:0} L)");
+            Set(rootTransform, SnowHatch, L.T("Kar küreği: tanka kar at", "Snow shovel: shovel snow into the tank") +
+                $" ({Mathf.RoundToInt(simState.SnowKg)}/{SteamSim.SnowCapacityKg:0} kg)");
         }
 
         static float s_DampUntil;
 
         /// rwo clicks within three seconds pt the fire out (one stray click must not waste a good fire).
-        static void Damp(SteamSim sim)
+        static void Damp(SteamSim simulation)
         {
-            if (!sim.FireBurning) { Message(L.T("Ocak zaten sönük.", "The fire is already out.")); return; }
+            if (!simulation.FireBurning) { Message(L.T("Ocak zaten sönük.", "The fire is already out.")); return; }
             if (Time.time >= s_DampUntil)
             {
                 s_DampUntil = Time.time + 3f;
@@ -178,38 +178,38 @@ namespace SteamRailway
                 return;
             }
             s_DampUntil = 0f;
-            sim.ExtinguishFire();
-            SynthSounds.PlayLever(sim.Train, 0.8f, 0.7f);
-            TrainSounds.PlayFor(TrainSounds.SteamHiss, TrainSounds.Cab(sim.Train), 1.4f);
+            simulation.ExtinguishFire();
+            SynthSounds.PlayLever(simulation.Train, 0.8f, 0.7f);
+            TrainSounds.PlayFor(TrainSounds.SteamHiss, TrainSounds.Cab(simulation.Train), 1.4f);
             Message(L.T("Sürgü kapatıldı: ocak söndü.", "The damper is shut: the fire is out."));
         }
 
         internal static void Message(string text) => HUDMessage.AddMessage(text, false, false);
 
         /// steam from the safety valve (the whistle's particle systems sit on the boiler top).
-        public static void UpdateEffects(SteamSim sim)
+        public static void UpdateEffects(SteamSim simulation)
         {
-            var ps = sim.Train.m_SteamWhistleLightParticleSystem;
-            if (ps == null) return;
-            if (sim.SafetyValveOpen && !ps.isPlaying) ps.Play();
-            else if (!sim.SafetyValveOpen && ps.isPlaying) ps.Stop();
+            var particleSystem = simulation.Train.m_SteamWhistleLightParticleSystem;
+            if (particleSystem == null) return;
+            if (simulation.SafetyValveOpen && !particleSystem.isPlaying) particleSystem.Play();
+            else if (!simulation.SafetyValveOpen && particleSystem.isPlaying) particleSystem.Stop();
         }
 
         static void Set(Transform root, string name, string text)
         {
-            var t = root.Find(name);
-            if (t == null) return;
-            var bi = t.GetComponent<BaseInteraction>();
-            if (bi != null) bi.HoverText = text;
+            var transform = root.Find(name);
+            if (transform == null) return;
+            var interaction = transform.GetComponent<BaseInteraction>();
+            if (interaction != null) interaction.HoverText = text;
         }
 
         public static void ApplyRealism(SteamTrain train)
         {
             bool medium = SteamSim.Mode == Realism.Medium;
-            foreach (var n in MediumOnly)
+            foreach (var name in MediumOnly)
             {
-                var t = train.transform.Find(n);
-                if (t != null) t.gameObject.SetActive(medium);
+                var namedChild = train.transform.Find(name);
+                if (namedChild != null) namedChild.gameObject.SetActive(medium);
             }
         }
     }
