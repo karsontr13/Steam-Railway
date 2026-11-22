@@ -36,8 +36,9 @@ the new version did not change keeps your edits. `Mods\SteamRailway\ShippedData.
 
 ## Playing
 
-### The locomotive
+### The locomotive 
 
+- The train is located on the coastal highway map where its tracks end.
 - Climb into the cab through the right-hand door. Everything is operated by clicking the levers and valves.
 - Shovel coal into the firebox and light it. Water in the boiler and the tender is turned into steam; pressure
   rises with the boiler temperature. Open the regulator to move, set the reverser to choose the direction,
