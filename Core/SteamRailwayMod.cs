@@ -3,12 +3,13 @@ using UnityEngine;
 
 [assembly: MelonInfo(typeof(SteamRailway.SteamRailwayMod), "SteamRailway", "0.1.0", "Hamsi Buglama")]
 [assembly: MelonGame("Hinterland", "TheLongDark")]
+// The in-game settings page needs ModSettings; without it the mod runs on its preferences file alone.
+[assembly: MelonOptionalDependencies("ModSettings")]
 
 namespace SteamRailway
 {
-    /// A coal-fired steam railway for Great Bear, built on the base game's own train code
-    /// (TLD.SteamTrain + Curvy splines). Uses no DLC assets: the firebox is the base game's
-    /// pot belly stove and the track mesh is generated from the route splines at runtime.
+    /// A coal-fired steam railway for Great Bear, built on the base game's train code (SteamTrain + Curvy splines).
+    /// It uses no DLC assets: the firebox is the pot belly stove and the track mesh is generated at runtime.
     public class SteamRailwayMod : MelonMod
     {
         internal static MelonLogger.Instance Log;
@@ -19,13 +20,48 @@ namespace SteamRailway
         static MelonPreferences_Entry<bool> s_Verbose;
         static MelonPreferences_Entry<bool> s_ObjectEditor;
         static MelonPreferences_Entry<string> s_Realism;
+        static MelonPreferences_Entry<string> s_Difficulty;
+        static MelonPreferences_Entry<bool> s_DeveloperTools;
+
+        internal const string SimpleRealismName = "Simple";
+        internal const string MediumRealismName = "Medium";
 
         public static bool Enabled => s_Enabled == null || s_Enabled.Value;
         internal static Realism RealismMode =>
             s_Realism != null && s_Realism.Value.Trim().StartsWith("S", System.StringComparison.OrdinalIgnoreCase) ? Realism.Simple : Realism.Medium;
+        /// Easy or Hard for the next new game (a started game keeps the mode it began with).
+        internal static string DifficultySetting =>
+            s_Difficulty != null && s_Difficulty.Value.Trim().StartsWith("H", System.StringComparison.OrdinalIgnoreCase) ? Obstacles.HardName : Obstacles.EasyName;
+        /// Developer keys (F4: put the locomotive, ready to run, on the nearest line where you look). Turn off for normal play.
+        public static bool DeveloperToolsEnabled => s_DeveloperTools != null && s_DeveloperTools.Value;
         public static bool EditorEnabled => s_EditorEnabled != null && s_EditorEnabled.Value;
         public static bool Verbose => s_Verbose != null && s_Verbose.Value;
-        public static bool ObjectEditorEnabled => s_ObjectEditor == null || s_ObjectEditor.Value;
+        /// The F11 editors (object, track, terrain, obstacle). The saved edits are played back either way.
+        public static bool ObjectEditorEnabled => s_ObjectEditor != null && s_ObjectEditor.Value;
+
+        /// The settings page was confirmed: its values go into the preference entries.
+        internal static void ApplySettings(bool enabled, string realism, string difficulty, bool editors, bool developerTools, bool verbose)
+        {
+            Set(s_Enabled, enabled);
+            Set(s_Realism, realism);
+            Set(s_Difficulty, difficulty);
+            Set(s_ObjectEditor, editors);
+            Set(s_DeveloperTools, developerTools);
+            Set(s_Verbose, verbose);
+        }
+
+        static void Set<PreferenceValue>(MelonPreferences_Entry<PreferenceValue> entry, PreferenceValue value)
+        {
+            if (entry != null && !Equals(entry.Value, value)) entry.Value = value;
+        }
+
+        /// The blasting charge's item pack is written here, as the mod is registered: ModComponent reads the Mods folder
+        /// for packs later (when the game starts up), so a pack written now is loaded on the very first start.
+        public override void OnEarlyInitializeMelon()
+        {
+            Log = LoggerInstance;
+            Dynamite.ExtractPackage();
+        }
 
         public override void OnInitializeMelon()
         {
@@ -35,39 +71,21 @@ namespace SteamRailway
             s_EditorEnabled = s_Cat.CreateEntry("RouteEditor", false, "Route editor",
                 "F8 add point, F7 remove last point, F6 start a new route, F9 rebuild this scene, F10 save routes.json.");
             s_Verbose = s_Cat.CreateEntry("Verbose", false, "Verbose logging");
-            s_ObjectEditor = s_Cat.CreateEntry("ObjectEditor", true, "Object editor",
-                "F11 turns the object editor on: Del removes, G moves, Ctrl+Z undoes. Edits are kept in Mods/SteamRailway/Edits.");
-            s_Realism = s_Cat.CreateEntry("Realism", "Medium", "Realism",
+            s_ObjectEditor = s_Cat.CreateEntry("ObjectEditor", false, "Editors",
+                "F11 goes round the object, track, terrain and obstacle editors. Edits are kept in Mods/SteamRailway. Leave off for normal play.");
+            s_Realism = s_Cat.CreateEntry("Realism", MediumRealismName, "Realism",
                 "Simple: automatic boiler feed, regulator/reverser/brake only. Medium: injector and blower by hand, boiler failures.");
 
-            ExtractDefaults();
+            s_DeveloperTools = s_Cat.CreateEntry("DeveloperTools", false, "Developer tools",
+                "F4 puts the locomotive, ready to run (boiler hot, water full, fire lit), on the nearest line where you look. Turn off for normal play.");
+            s_Difficulty = s_Cat.CreateEntry("Difficulty", Obstacles.EasyName, "Difficulty (new games)",
+                "Easy: every game starts with the changed regions. Hard: regions start as in the original game; rockfalls, stranded wagons and the broken bridge have to be cleared. Chosen when a game is started.");
+
+            ShippedData.Extract();
             RouteStore.Load();
             WriteSoundCredits();
+            SettingsRegistration.TryRegister();
             Log.Msg($"SteamRailway loaded. Routes file: {RouteStore.FilePath}");
-        }
-
-        /// The lines, tunnels, terrain and object edits the mod ships with are carried inside the DLL. Files that are
-        /// missing from the mod's folder are written there on start; files that exist (hand edits) are never replaced.
-        static void ExtractDefaults()
-        {
-            try
-            {
-                var assembly = typeof(SteamRailwayMod).Assembly;
-                int written = 0;
-                foreach (var name in assembly.GetManifestResourceNames())
-                {
-                    string relativePath = name.Replace('\\', '/');
-                    if (!relativePath.StartsWith("Data/")) continue;
-                    string target = System.IO.Path.Combine(RouteStore.FolderPath, relativePath.Substring("Data/".Length).Replace('/', System.IO.Path.DirectorySeparatorChar));
-                    if (System.IO.File.Exists(target)) continue;
-                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(target));
-                    using (var stream = assembly.GetManifestResourceStream(name))
-                    using (var file = System.IO.File.Create(target)) stream.CopyTo(file);
-                    written++;
-                }
-                if (written > 0) Log.Msg($"{written} default data file(s) written to {RouteStore.FolderPath}.");
-            }
-            catch (System.Exception e) { Log.Warning($"Default data could not be written: {e.Message}"); }
         }
 
         /// The sound recordings are CC BY 4.0: their credits travel inside the DLL and are written next to the mod's data.
@@ -84,12 +102,13 @@ namespace SteamRailway
                     using (var file = System.IO.File.Create(path)) stream.CopyTo(file);
                 }
             }
-            catch (System.Exception e) { Log.Warning($"Sound credits could not be written: {e.Message}"); }
+            catch (System.Exception exception) { Log.Warning($"Sound credits could not be written: {exception.Message}"); }
         }
 
         public override void OnSceneWasInitialized(int buildIndex, string sceneName)
         {
             if (!Enabled) return;
+            ArrivalGuard.SceneLoaded();
             RailwayManager.OnSceneInitialized(sceneName);
         }
 
@@ -102,13 +121,15 @@ namespace SteamRailway
         {
             if (!Enabled) return;
             RailwayManager.Update();
+            if (DeveloperToolsEnabled) DeveloperTools.Update();
             if (EditorEnabled) RouteEditor.Update();
+            // the saved object edits keep their loot in place and removed objects switched off, editors on or not
+            try { ObjectEdits.Tick(); }
+            catch (System.Exception exception) { LogUpdateFailure("Object edits", exception); }
             if (ObjectEditorEnabled)
             {
-                try { ObjectEdits.Tick(); }
-                catch (System.Exception e) { Log.Warning($"Object edits: {e.Message}"); }
                 try { EditorHub.Update(); }
-                catch (System.Exception e) { Log.Warning($"Editor: {e.Message}"); }
+                catch (System.Exception exception) { LogUpdateFailure("Editor", exception); }
             }
         }
 
@@ -116,6 +137,8 @@ namespace SteamRailway
         {
             if (Enabled && ObjectEditorEnabled) EditorHub.OnGUI();
         }
+
+        static void LogUpdateFailure(string label, System.Exception exception) => Log.Warning($"{label}: {exception.Message}");
 
         internal static void Debug(string message)
         {

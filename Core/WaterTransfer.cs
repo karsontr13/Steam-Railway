@@ -10,7 +10,7 @@ namespace SteamRailway
         const long UnitsPerLitre = 1_000_000_000L;
 
         /// Pours up to `litres` (all of it if available). Returns the litres actually poured.
-        public static float PourInventoryIntoTender(SteamSim simulation, float litres)
+        public static float PourInventoryIntoTender(SteamSimulation simulation, float litres)
         {
             var inventory = GameManager.GetInventoryComponent();
             litres = Mathf.Min(litres, simulation.TenderSpace);
@@ -19,7 +19,7 @@ namespace SteamRailway
             return poured;
         }
 
-        static float Take(GearItem supplyItem, SteamSim simulation, float want)
+        static float Take(GearItem supplyItem, SteamSimulation simulation, float want)
         {
             if (want <= 0f || supplyItem == null || supplyItem.m_WaterSupply == null) return 0f;
             var waterSupply = supplyItem.m_WaterSupply;

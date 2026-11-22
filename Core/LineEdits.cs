@@ -3,27 +3,34 @@ using UnityEngine;
 
 namespace SteamRailway
 {
-    /// Changes to built lines made with the track editor: a stretch cut out, or a stretch given a new shape. They are
-    /// written into the line files the region is built from: the region's own lines (Lines\<region>.json, then
-    /// locked so the line finder never replaces it) and the drawn lines (Custom\<region>.json).
+    /// Cuts and reshapes built lines for the track editor, writing the changes into the line files the region is built from
+    /// (Lines\<region>.json and Custom\<region>.json).
     internal static class LineEdits
     {
+        const int KeptStretchComponentCount = 6;
+        const int KeptEndXIndex = 3;
+        const int KeptEndYIndex = 4;
+        const int KeptEndZIndex = 5;
+        const float NearPointSquaredDistanceInSquareMeters = 9f;
+        const float MinimumMoveSquaredDistanceInSquareMeters = 1e-6f;
+        const float MinimumSegmentSquaredLengthInSquareMeters = 1e-4f;
+        const float KeptStretchReachInMeters = 3f;
         const float OnLine = 1.2f;     // m: a line point this near the built track belongs to the edited stretch
 
-        sealed class Src
+        sealed class LineSource
         {
-            public List<float[]> Pts;
+            public List<float[]> Points;
             public LineData Auto;
             public CustomLineData Custom;
         }
 
-        static List<Src> Sources(string scene, out LineFile auto, out CustomLineFile custom)
+        static List<LineSource> Sources(string scene, out LineFile auto, out CustomLineFile custom)
         {
-            var results = new List<Src>();
+            var results = new List<LineSource>();
             auto = OriginalRails.ReadLineFile(scene);
-            if (auto?.Lines != null) foreach (var lineData in auto.Lines) if (lineData.Points != null) results.Add(new Src { Pts = lineData.Points, Auto = lineData });
+            if (auto?.Lines != null) foreach (var lineData in auto.Lines) if (lineData.Points != null) results.Add(new LineSource { Points = lineData.Points, Auto = lineData });
             custom = CustomLines.For(scene);
-            foreach (var customLine in custom.Lines) if (customLine.Points != null) results.Add(new Src { Pts = customLine.Points, Custom = customLine });
+            foreach (var customLine in custom.Lines) if (customLine.Points != null) results.Add(new LineSource { Points = customLine.Points, Custom = customLine });
             return results;
         }
 
@@ -48,7 +55,7 @@ namespace SteamRailway
         }
 
         /// Is a line point on the built track between path metres s0 and s1 (its path metres in s)?
-        static bool In(BuiltTrack track, Vector3 point, float startArc, float endArc, out float arcLength)
+        static bool IsOnStretch(BuiltTrack track, Vector3 point, float startArc, float endArc, out float arcLength)
         {
             arcLength = track.Path.NearestDistance(point, out float distance);
             return distance <= OnLine && arcLength >= startArc && arcLength <= endArc;
@@ -58,53 +65,53 @@ namespace SteamRailway
         /// Returns how many line points were removed.
         public static int Cut(string scene, BuiltTrack track, float startArc, float endArc)
         {
-            var srcs = Sources(scene, out var auto, out var custom);
+            var lineSources = Sources(scene, out var auto, out var custom);
             int removed = 0;
             bool autoChanged = false, customChanged = false;
             var newAuto = new List<LineData>();
             var newCustom = new List<CustomLineData>();
-            foreach (var src in srcs)
+            foreach (var lineSource in lineSources)
             {
                 var runs = new List<List<float[]>>();
                 var run = new List<float[]>();
-                bool hit = false;
-                foreach (var q in src.Pts)
+                bool touchesStretch = false;
+                foreach (var pointComponents in lineSource.Points)
                 {
-                    if (In(track, CustomLines.V(q), startArc, endArc, out _))
+                    if (IsOnStretch(track, CustomLines.ToVector3(pointComponents), startArc, endArc, out _))
                     {
-                        hit = true; removed++;
+                        touchesStretch = true; removed++;
                         if (run.Count > 0) { runs.Add(run); run = new List<float[]>(); }
                         continue;
                     }
-                    run.Add(q);
+                    run.Add(pointComponents);
                 }
                 if (run.Count > 0) runs.Add(run);
-                if (!hit) continue;
+                if (!touchesStretch) continue;
                 runs.RemoveAll(results => results.Count < 2);
-                if (src.Auto != null)
+                if (lineSource.Auto != null)
                 {
                     autoChanged = true;
-                    if (runs.Count == 0) { auto.Lines.Remove(src.Auto); continue; }
+                    if (runs.Count == 0) { auto.Lines.Remove(lineSource.Auto); continue; }
                     // the first part keeps its place in the file (the other lines keep their names)
-                    var keep = src.Auto.Keep;
-                    src.Auto.Points = runs[0];
-                    src.Auto.Keep = KeepIn(keep, runs[0]);
+                    var keep = lineSource.Auto.Keep;
+                    lineSource.Auto.Points = runs[0];
+                    lineSource.Auto.Keep = KeepIn(keep, runs[0]);
                     for (int index = 1; index < runs.Count; index++)
-                        newAuto.Add(new LineData { Points = runs[index], Keep = KeepIn(keep, runs[index]), Pieces = src.Auto.Pieces });
+                        newAuto.Add(new LineData { Points = runs[index], Keep = KeepIn(keep, runs[index]), Pieces = lineSource.Auto.Pieces });
                 }
                 else
                 {
                     customChanged = true;
-                    if (runs.Count == 0) { custom.Lines.Remove(src.Custom); continue; }
-                    var sw = src.Custom.Switches ?? new List<float[]>();
-                    src.Custom.Points = runs[0];
-                    src.Custom.Switches = SwitchesIn(sw, runs[0]);
+                    if (runs.Count == 0) { custom.Lines.Remove(lineSource.Custom); continue; }
+                    var switchPoints = lineSource.Custom.Switches ?? new List<float[]>();
+                    lineSource.Custom.Points = runs[0];
+                    lineSource.Custom.Switches = SwitchesIn(switchPoints, runs[0]);
                     for (int index = 1; index < runs.Count; index++)
-                        newCustom.Add(new CustomLineData { Id = null, Points = runs[index], Fill = src.Custom.Fill, Switches = SwitchesIn(sw, runs[index]) });
+                        newCustom.Add(new CustomLineData { Identifier = null, Points = runs[index], Fill = lineSource.Custom.Fill, Switches = SwitchesIn(switchPoints, runs[index]) });
                 }
             }
             if (auto != null) auto.Lines.AddRange(newAuto);
-            foreach (var customLine in newCustom) { customLine.Id = CustomLines.NextId(scene); custom.Lines.Add(customLine); }
+            foreach (var customLine in newCustom) { customLine.Identifier = CustomLines.NextId(scene); custom.Lines.Add(customLine); }
             Save(scene, auto, autoChanged, customChanged);
             return removed;
         }
@@ -114,29 +121,29 @@ namespace SteamRailway
         {
             var results = new List<float[]>();
             if (keep == null) return results;
-            foreach (var k in keep)
+            foreach (var keptStretch in keep)
             {
-                if (k == null || k.Length < 6) continue;
-                if (Near(points, new Vector3(k[0], k[1], k[2])) && Near(points, new Vector3(k[3], k[4], k[5]))) results.Add(k);
+                if (keptStretch == null || keptStretch.Length < KeptStretchComponentCount) continue;
+                if (Near(points, new Vector3(keptStretch[0], keptStretch[1], keptStretch[2])) && Near(points, new Vector3(keptStretch[KeptEndXIndex], keptStretch[KeptEndYIndex], keptStretch[KeptEndZIndex]))) results.Add(keptStretch);
             }
             return results;
         }
 
         static bool Near(List<float[]> points, Vector3 point)
         {
-            foreach (var q in points) { float deltaX = q[0] - point.x, deltaZ = q[2] - point.z; if (deltaX * deltaX + deltaZ * deltaZ < 9f) return true; }
+            foreach (var pointComponents in points) { float deltaX = pointComponents[0] - point.x, deltaZ = pointComponents[2] - point.z; if (deltaX * deltaX + deltaZ * deltaZ < NearPointSquaredDistanceInSquareMeters) return true; }
             return false;
         }
 
-        static List<float[]> SwitchesIn(List<float[]> sw, List<float[]> points)
+        static List<float[]> SwitchesIn(List<float[]> switchPoints, List<float[]> points)
         {
             var results = new List<float[]>();
             if (points.Count == 0) return results;
-            var start = CustomLines.V(points[0]); var end = CustomLines.V(points[points.Count - 1]);
-            foreach (var p in sw)
+            var start = CustomLines.ToVector3(points[0]); var end = CustomLines.ToVector3(points[points.Count - 1]);
+            foreach (var switchComponents in switchPoints)
             {
-                var vector = CustomLines.V(p);
-                if ((vector - start).sqrMagnitude < 1f || (vector - end).sqrMagnitude < 1f) results.Add(p);
+                var vector = CustomLines.ToVector3(switchComponents);
+                if ((vector - start).sqrMagnitude < 1f || (vector - end).sqrMagnitude < 1f) results.Add(switchComponents);
             }
             return results;
         }
@@ -145,21 +152,21 @@ namespace SteamRailway
         /// puts its path metres. Points on a kept original piece (a bridge) stay. Returns how many points moved.
         public static int Reshape(string scene, BuiltTrack track, float startArc, float endArc, System.Func<float, Vector3> shape)
         {
-            var srcs = Sources(scene, out var auto, out var custom);
+            var lineSources = Sources(scene, out var auto, out var custom);
             int moved = 0;
             bool autoChanged = false, customChanged = false;
-            foreach (var src in srcs)
+            foreach (var lineSource in lineSources)
             {
-                for (int index = 0; index < src.Pts.Count; index++)
+                for (int index = 0; index < lineSource.Points.Count; index++)
                 {
-                    var point = CustomLines.V(src.Pts[index]);
-                    if (!In(track, point, startArc, endArc, out float arcLength)) continue;
-                    if (src.Auto != null && OnKept(src.Auto, point)) continue;
-                    var np = shape(arcLength);
-                    if ((np - point).sqrMagnitude < 1e-6f) continue;
-                    src.Pts[index] = CustomLines.F(np);
+                    var point = CustomLines.ToVector3(lineSource.Points[index]);
+                    if (!IsOnStretch(track, point, startArc, endArc, out float arcLength)) continue;
+                    if (lineSource.Auto != null && OnKept(lineSource.Auto, point)) continue;
+                    var newPoint = shape(arcLength);
+                    if ((newPoint - point).sqrMagnitude < MinimumMoveSquaredDistanceInSquareMeters) continue;
+                    lineSource.Points[index] = CustomLines.ToFloatArray(newPoint);
                     moved++;
-                    if (src.Auto != null) autoChanged = true; else customChanged = true;
+                    if (lineSource.Auto != null) autoChanged = true; else customChanged = true;
                 }
             }
             Save(scene, auto, autoChanged, customChanged);
@@ -169,13 +176,13 @@ namespace SteamRailway
         static bool OnKept(LineData lineData, Vector3 point)
         {
             if (lineData.Keep == null) return false;
-            foreach (var k in lineData.Keep)
+            foreach (var keptStretch in lineData.Keep)
             {
-                if (k == null || k.Length < 6) continue;
-                var start = new Vector3(k[0], k[1], k[2]); var end = new Vector3(k[3], k[4], k[5]);
+                if (keptStretch == null || keptStretch.Length < KeptStretchComponentCount) continue;
+                var start = new Vector3(keptStretch[0], keptStretch[1], keptStretch[2]); var end = new Vector3(keptStretch[KeptEndXIndex], keptStretch[KeptEndYIndex], keptStretch[KeptEndZIndex]);
                 var segment = end - start;
-                float fraction = Mathf.Clamp01(Vector3.Dot(point - start, segment) / Mathf.Max(segment.sqrMagnitude, 1e-4f));
-                if ((start + segment * fraction - point).magnitude < 3f) return true;
+                float fraction = Mathf.Clamp01(Vector3.Dot(point - start, segment) / Mathf.Max(segment.sqrMagnitude, MinimumSegmentSquaredLengthInSquareMeters));
+                if ((start + segment * fraction - point).magnitude < KeptStretchReachInMeters) return true;
             }
             return false;
         }

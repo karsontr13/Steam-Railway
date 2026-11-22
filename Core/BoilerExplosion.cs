@@ -4,21 +4,41 @@ using UnityEngine;
 
 namespace SteamRailway
 {
-    /// A boiler explosion does not take health directly: anyone close by is scalded (the game's burns affliction).
-    /// The player stays where they are and may leave the cab whenever they like.
-    /// The look: a flash of fire at the boiler, a rolling steam cloud, a dark smoke column and glowing sparks
-    /// (the bundle's BoilerBlast prefab), a light flash that dies out.
+    /// A boiler explosion scalds anyone close by with the game's burns affliction instead of taking health.
+    /// The look is the bundle's BoilerBlast particle prefab plus a light flash that dies out.
     internal static class BoilerExplosion
     {
         const float HearRadius = 25f;
         const float BurnsRadius = 12f;
         const float FlashTime = 1.4f;
+        const float AdditiveTintLevel = 0.5f;
+        const float BarrelCenterHeightInMeters = 3.1f;
+        const float BarrelCenterForwardInMeters = 2.2f;
+        const float BlastPrefabLifetimeInSeconds = 30f;
+        const float FlashLightHeightInMeters = 0.5f;
+        const float FlashLightRangeInMeters = 40f;
+        const float FlashLightIntensity = 8f;
+        const float FlashLightExtraLifetimeInSeconds = 0.5f;
+        const float FlashFlickerBase = 0.85f;
+        const float FlashFlickerAmplitude = 0.15f;
+        const float FlashFlickerRadiansPerSecond = 60f;
+        const float FlashLightRed = 1f;
+        const float FlashLightGreen = 0.62f;
+        const float FlashLightBlue = 0.28f;
+        const float NoFlashStartTimeInSeconds = -100f;
+        const float BurstParticleSizeInMeters = 6f;
+        const float BurstParticleSpeedInMetersPerSecond = 10f;
+        const float BurstParticleLifetimeInSeconds = 4f;
+        const int BurstMaximumParticles = 600;
+        const float BurstShapeAngleInDegrees = 70f;
+        const float BurstShapeRadiusInMeters = 1.5f;
+        const int BurstEmitCount = 400;
 
         static Light s_Flash;
-        static float s_FlashStart = -100f;
-        static Vector3 s_BlastPos;
+        static float s_FlashStart = NoFlashStartTimeInSeconds;
+        static Vector3 s_BlastWorldPosition;
 
-        public static void Play(SteamSim simulation)
+        public static void Play(SteamSimulation simulation)
         {
             var train = simulation.Train;
             Blast(train);
@@ -30,7 +50,7 @@ namespace SteamRailway
             float distance = Vector3.Distance(player.transform.position, train.transform.position);
             if (distance > HearRadius)
             {
-                CabControls.Message(L.T("Uzaktan büyük bir patlama sesi geldi: lokomotifin kazanı patladı.",
+                CabControls.Message(Localizer.Translate("Uzaktan büyük bir patlama sesi geldi: lokomotifin kazanı patladı.",
                                         "A loud bang in the distance: the locomotive's boiler has exploded."));
                 return;
             }
@@ -39,26 +59,36 @@ namespace SteamRailway
                 var burns = GameManager.GetBurnsComponent();
                 if (burns != null && !burns.HasBurns())
                     burns.BurnsStart("GAMEPLAY_BurnsCauseSteam", true, false, AfflictionOptions.PlayFX | AfflictionOptions.DisplayIcon);
-                CabControls.Message(L.T("KAZAN PATLADI! Buhardan yandın. Kazan onarılmadan lokomotif çalışmaz.",
+                CabControls.Message(Localizer.Translate("KAZAN PATLADI! Buhardan yandın. Kazan onarılmadan lokomotif çalışmaz.",
                                         "THE BOILER EXPLODED! You were scalded by the steam. The locomotive won't run until the boiler is repaired."));
             }
             else
-                CabControls.Message(L.T("KAZAN PATLADI! Kazan onarılmadan lokomotif çalışmaz.",
+                CabControls.Message(Localizer.Translate("KAZAN PATLADI! Kazan onarılmadan lokomotif çalışmaz.",
                                         "THE BOILER EXPLODED! The locomotive won't run until the boiler is repaired."));
         }
 
         static void Blast(SteamTrain train)
         {
             // the middle of the boiler barrel, train-local
-            var pos = train.transform.TransformPoint(new Vector3(0f, 3.1f, 2.2f));
-            s_BlastPos = pos;
+            var barrelWorldPosition = train.transform.TransformPoint(new Vector3(0f, BarrelCenterHeightInMeters, BarrelCenterForwardInMeters));
+            if (!BlastAt(barrelWorldPosition, train.transform.rotation, 1f)) SteamBurst(train);
+        }
+
+        /// The blast's look at any place: particles plus a fading light flash; `scale` 1 is a boiler.
+        /// Returns false when the bundle's particle prefab is missing (only the light is shown then).
+        public static bool BlastAt(Vector3 worldPosition, Quaternion rotation, float scale)
+        {
+            s_BlastWorldPosition = worldPosition;
+            bool shown = false;
             var prefab = LocomotiveModel.BlastPrefab();
             if (prefab != null)
             {
+                shown = true;
                 var targetObject = Object.Instantiate(prefab);
                 targetObject.name = "BoilerBlast";
-                targetObject.transform.position = pos;
-                targetObject.transform.rotation = train.transform.rotation;
+                targetObject.transform.position = worldPosition;
+                targetObject.transform.rotation = rotation;
+                targetObject.transform.localScale = Vector3.one * scale;
                 var blend = LocoSmoke.FindBlendShader();
                 var add = Shader.Find("Particles/Additive") ?? Shader.Find("Legacy Shaders/Particles/Additive");
                 foreach (var particleSystem in targetObject.GetComponentsInChildren<ParticleSystem>())
@@ -71,26 +101,26 @@ namespace SteamRailway
                         var material = new Material(shader) { name = "SteamRailway_Blast_" + particleSystem.name };
                         material.mainTexture = particleSystem.name == "Sparks" || particleSystem.name == "Embers" ? Texture2D.whiteTexture : particleRenderer.sharedMaterial != null ? particleRenderer.sharedMaterial.mainTexture : null;
                         if (material.HasProperty("_TintColor"))
-                            material.SetColor("_TintColor", fire ? new Color(0.5f, 0.5f, 0.5f, 0.5f) : new Color(0.5f, 0.5f, 0.5f, 0.5f));
+                            material.SetColor("_TintColor", fire ? new Color(AdditiveTintLevel, AdditiveTintLevel, AdditiveTintLevel, AdditiveTintLevel) : new Color(AdditiveTintLevel, AdditiveTintLevel, AdditiveTintLevel, AdditiveTintLevel));
                         particleRenderer.sharedMaterial = material;
                     }
                     particleSystem.Play();
                 }
-                Object.Destroy(targetObject, 30f);
+                Object.Destroy(targetObject, BlastPrefabLifetimeInSeconds);
             }
-            else SteamBurst(train);
 
             // a flash of light that dies out
             var lampObject = new GameObject("BoilerBlastLight");
-            lampObject.transform.position = pos + Vector3.up * 0.5f;
+            lampObject.transform.position = worldPosition + Vector3.up * FlashLightHeightInMeters;
             s_Flash = lampObject.AddComponent<Light>();
             s_Flash.type = LightType.Point;
-            s_Flash.color = new Color(1f, 0.62f, 0.28f);
-            s_Flash.range = 40f;
-            s_Flash.intensity = 8f;
+            s_Flash.color = new Color(FlashLightRed, FlashLightGreen, FlashLightBlue);
+            s_Flash.range = FlashLightRangeInMeters;
+            s_Flash.intensity = FlashLightIntensity;
             s_Flash.shadows = LightShadows.None;
             s_FlashStart = Time.time;
-            Object.Destroy(lampObject, FlashTime + 0.5f);
+            Object.Destroy(lampObject, FlashTime + FlashLightExtraLifetimeInSeconds);
+            return shown;
         }
 
         /// the flash fades.
@@ -101,7 +131,7 @@ namespace SteamRailway
             if (s_Flash != null)
             {
                 float scale = Mathf.Clamp01(1f - fraction / FlashTime);
-                s_Flash.intensity = 8f * scale * scale * (0.85f + 0.15f * Mathf.Sin(fraction * 60f));
+                s_Flash.intensity = FlashLightIntensity * scale * scale * (FlashFlickerBase + FlashFlickerAmplitude * Mathf.Sin(fraction * FlashFlickerRadiansPerSecond));
             }
         }
 
@@ -111,12 +141,12 @@ namespace SteamRailway
             var particleSystem = train.m_SteamWhistleDenseParticleSystem;
             if (particleSystem == null) return;
             var main = particleSystem.main;
-            main.startSize = new ParticleSystem.MinMaxCurve(6f);
-            main.startSpeed = new ParticleSystem.MinMaxCurve(10f);
-            main.startLifetime = new ParticleSystem.MinMaxCurve(4f);
-            main.maxParticles = 600;
-            var shape = particleSystem.shape; shape.angle = 70f; shape.radius = 1.5f;
-            particleSystem.Emit(400);
+            main.startSize = new ParticleSystem.MinMaxCurve(BurstParticleSizeInMeters);
+            main.startSpeed = new ParticleSystem.MinMaxCurve(BurstParticleSpeedInMetersPerSecond);
+            main.startLifetime = new ParticleSystem.MinMaxCurve(BurstParticleLifetimeInSeconds);
+            main.maxParticles = BurstMaximumParticles;
+            var shape = particleSystem.shape; shape.angle = BurstShapeAngleInDegrees; shape.radius = BurstShapeRadiusInMeters;
+            particleSystem.Emit(BurstEmitCount);
         }
     }
 }

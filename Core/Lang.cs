@@ -3,7 +3,7 @@ using Il2Cpp;
 namespace SteamRailway
 {
     /// Texts in Turkish when the game runs in Turkish, English otherwise.
-    internal static class L
+    internal static class Localizer
     {
         static string s_Language;
         static bool s_Turkish;
@@ -19,6 +19,6 @@ namespace SteamRailway
             }
         }
 
-        public static string T(string turkishText, string englishText) => Turkish ? turkishText : englishText;
+        public static string Translate(string turkishText, string englishText) => Turkish ? turkishText : englishText;
     }
 }

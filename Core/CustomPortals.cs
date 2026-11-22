@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Il2Cpp;
 using UnityEngine;
 
@@ -10,16 +11,16 @@ namespace SteamRailway
     internal sealed class PortalEnd
     {
         public string Scene { get; set; }
-        public float[] Pos { get; set; }      // on the line
+        [JsonPropertyName("Pos")] public float[] Position { get; set; }      // on the line
         public float[] Out { get; set; }      // the way a train leaves the region through it
         public string Spawn { get; set; }     // the region's spawn point the game puts an arriving player at
     }
 
     internal sealed class PortalLink
     {
-        public string Id { get; set; }
-        public PortalEnd A { get; set; }
-        public PortalEnd B { get; set; }      // null while it is being made (the player is on the way there)
+        [JsonPropertyName("Id")] public string Identifier { get; set; }
+        [JsonPropertyName("A")] public PortalEnd FirstEnd { get; set; }
+        [JsonPropertyName("B")] public PortalEnd SecondEnd { get; set; }      // null while it is being made (the player is on the way there)
     }
 
     internal sealed class PortalFile
@@ -28,11 +29,11 @@ namespace SteamRailway
         public List<PortalLink> Links { get; set; } = new List<PortalLink>();
     }
 
-    /// Rail transitions between regions made by hand (for lines that run into a tunnel with no transition):
-    /// both ends are points on lines, kept in Mods\SteamRailway\Portals.json. A train passing an end in its
-    /// "out" direction goes to the other end's region and comes out there.
+    /// Hand-made rail transitions between regions, kept in Mods\SteamRailway\Portals.json (two ends on lines).
+    /// A train passing an end in its "out" direction comes out at the other end's region.
     internal static class CustomPortals
     {
+        const float NearestPortalRadiusInMeters = 15f;
         static readonly JsonSerializerOptions s_Json = new JsonSerializerOptions { WriteIndented = true };
         static PortalFile s_File;
 
@@ -45,7 +46,7 @@ namespace SteamRailway
             if (File.Exists(FilePath))
             {
                 try { s_File = JsonSerializer.Deserialize<PortalFile>(File.ReadAllText(FilePath), s_Json) ?? new PortalFile(); }
-                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Portals.json could not be read: {e.Message}"); }
+                catch (System.Exception exception) { SteamRailwayMod.Log.Warning($"Portals.json could not be read: {exception.Message}"); }
             }
             if (s_File.Links == null) s_File.Links = new List<PortalLink>();
             return s_File;
@@ -58,7 +59,7 @@ namespace SteamRailway
                 Directory.CreateDirectory(RouteStore.FolderPath);
                 File.WriteAllText(FilePath, JsonSerializer.Serialize(File_(), s_Json));
             }
-            catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Writing Portals.json failed: {e.Message}"); }
+            catch (System.Exception exception) { SteamRailwayMod.Log.Warning($"Writing Portals.json failed: {exception.Message}"); }
         }
 
         /// The transition ends in this region whose other end is set: (end here, the other end).
@@ -67,9 +68,9 @@ namespace SteamRailway
             var results = new List<(PortalEnd, PortalEnd)>();
             foreach (var portalLink in File_().Links)
             {
-                if (portalLink.A == null || portalLink.B == null) continue;
-                if (portalLink.A.Scene == scene) results.Add((portalLink.A, portalLink.B));
-                if (portalLink.B.Scene == scene) results.Add((portalLink.B, portalLink.A));
+                if (portalLink.FirstEnd == null || portalLink.SecondEnd == null) continue;
+                if (portalLink.FirstEnd.Scene == scene) results.Add((portalLink.FirstEnd, portalLink.SecondEnd));
+                if (portalLink.SecondEnd.Scene == scene) results.Add((portalLink.SecondEnd, portalLink.FirstEnd));
             }
             return results;
         }
@@ -89,7 +90,7 @@ namespace SteamRailway
 
         static PortalLink Pending()
         {
-            foreach (var portalLink in File_().Links) if (portalLink.A != null && portalLink.B == null) return portalLink;
+            foreach (var portalLink in File_().Links) if (portalLink.FirstEnd != null && portalLink.SecondEnd == null) return portalLink;
             return null;
         }
 
@@ -98,38 +99,38 @@ namespace SteamRailway
         {
             var portalFile = File_();
             var pending = Pending();
-            if (pending == null || pending.A.Scene == scene)
+            if (pending == null || pending.FirstEnd.Scene == scene)
             {
                 // the start: trains leave here going away from you (into the tunnel)
-                if (pending == null) { pending = new PortalLink { Id = "portal" + (portalFile.Links.Count + 1) }; portalFile.Links.Add(pending); }
-                pending.A = new PortalEnd { Scene = scene, Pos = CustomLines.F(point), Out = CustomLines.F(away), Spawn = NearestSpawn(point) };
+                if (pending == null) { pending = new PortalLink { Identifier = "portal" + (portalFile.Links.Count + 1) }; portalFile.Links.Add(pending); }
+                pending.FirstEnd = new PortalEnd { Scene = scene, Position = CustomLines.ToFloatArray(point), Out = CustomLines.ToFloatArray(away), Spawn = NearestSpawn(point) };
                 Save();
-                return L.T("Geçişin başlangıcı kaydedildi. Hedef bölgeye git, trenin çıkacağı yerde raya bakıp (trenin gideceği yöne dönük) P'ye bas.",
+                return Localizer.Translate("Geçişin başlangıcı kaydedildi. Hedef bölgeye git, trenin çıkacağı yerde raya bakıp (trenin gideceği yöne dönük) P'ye bas.",
                            "Start of the transition saved. Go to the other region, look at the line where the train should come out (facing the way it should run) and press P.");
             }
             // the other end: trains come out here running away from you; they leave back the other way
-            pending.B = new PortalEnd { Scene = scene, Pos = CustomLines.F(point), Out = CustomLines.F(-away), Spawn = NearestSpawn(point) };
+            pending.SecondEnd = new PortalEnd { Scene = scene, Position = CustomLines.ToFloatArray(point), Out = CustomLines.ToFloatArray(-away), Spawn = NearestSpawn(point) };
             Save();
-            return L.T($"Geçiş tamamlandı: {pending.A.Scene} ↔ {scene}. Raylar yeniden kurulunca çalışır (F9 ya da bölgeye yeniden gir).",
-                       $"Transition done: {pending.A.Scene} ↔ {scene}. It works once the rails are laid again (F9 or enter the region again).");
+            return Localizer.Translate($"Geçiş tamamlandı: {pending.FirstEnd.Scene} ↔ {scene}. Raylar yeniden kurulunca çalışır (F9 ya da bölgeye yeniden gir).",
+                       $"Transition done: {pending.FirstEnd.Scene} ↔ {scene}. It works once the rails are laid again (F9 or enter the region again).");
         }
 
         /// Shift+P: removes the transition with an end nearest to p in this region (or the one being made).
         public static string RemoveNear(string scene, Vector3 point)
         {
             var portalFile = File_();
-            PortalLink best = null; float bestDistance = 15f * 15f;
+            PortalLink best = null; float bestDistance = NearestPortalRadiusInMeters * NearestPortalRadiusInMeters;
             foreach (var portalLink in portalFile.Links)
-                foreach (var portalEnd in new[] { portalLink.A, portalLink.B })
+                foreach (var portalEnd in new[] { portalLink.FirstEnd, portalLink.SecondEnd })
                 {
                     if (portalEnd == null || portalEnd.Scene != scene) continue;
-                    float distance = (CustomLines.V(portalEnd.Pos) - point).sqrMagnitude;
+                    float distance = (CustomLines.ToVector3(portalEnd.Position) - point).sqrMagnitude;
                     if (distance < bestDistance) { bestDistance = distance; best = portalLink; }
                 }
-            if (best == null) return L.T("Yakında elle yapılmış bir geçiş yok.", "No hand-made transition near here.");
+            if (best == null) return Localizer.Translate("Yakında elle yapılmış bir geçiş yok.", "No hand-made transition near here.");
             portalFile.Links.Remove(best);
             Save();
-            return L.T("Geçiş silindi.", "Transition deleted.");
+            return Localizer.Translate("Geçiş silindi.", "Transition deleted.");
         }
 
         /// A transition object of the game's kind for the scene load (copied from one the region has, so the game
@@ -142,11 +143,11 @@ namespace SteamRailway
             var targetObject = Object.Instantiate(sourceLoadScene.gameObject);
             targetObject.name = "SR_PortalLoad_" + toScene;
             foreach (var collider in targetObject.GetComponentsInChildren<Collider>(true)) collider.enabled = false;
-            var l = targetObject.GetComponent<LoadScene>();
-            l.m_SceneToLoad = toScene;
-            l.m_ExitPointName = spawn ?? "";
-            l.m_GUID = System.Guid.NewGuid().ToString();
-            return l;
+            var loadSceneComponent = targetObject.GetComponent<LoadScene>();
+            loadSceneComponent.m_SceneToLoad = toScene;
+            loadSceneComponent.m_ExitPointName = spawn ?? "";
+            loadSceneComponent.m_GUID = System.Guid.NewGuid().ToString();
+            return loadSceneComponent;
         }
     }
 }

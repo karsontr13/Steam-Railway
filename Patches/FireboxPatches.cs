@@ -12,7 +12,7 @@ namespace SteamRailway.Patches
         private static void Postfix(FireplaceInteraction __instance, ref string __result)
         {
             var train = __instance.GetComponentInParent<SteamTrain>();
-            var simulation = train != null ? RailwayManager.GetSim(train) : null;
+            var simulation = train != null ? RailwayManager.GetSimulation(train) : null;
             if (simulation != null) __result = FireboxControl.HoverText(simulation);
         }
     }
@@ -24,11 +24,11 @@ namespace SteamRailway.Patches
         private static bool Prefix(FireplaceInteraction __instance, ref bool __result)
         {
             var train = __instance.GetComponentInParent<SteamTrain>();
-            var simulation = train != null ? RailwayManager.GetSim(train) : null;
+            var simulation = train != null ? RailwayManager.GetSimulation(train) : null;
             if (simulation == null || simulation.FireBurning) return true;
             string error = null;
-            if (simulation.S.Exploded) error = L.T("Kazan patlamış: önce onarılmalı.", "The boiler has burst: repair it first.");
-            else if (simulation.S.PlugBlown && SteamSim.Mode == Realism.Medium) error = L.T("Eriyen tapa onarılmadan ocak yakılamaz.", "The fire can't be lit until the fusible plug is replaced.");
+            if (simulation.State.Exploded) error = Localizer.Translate("Kazan patlamış: önce onarılmalı.", "The boiler has burst: repair it first.");
+            else if (simulation.State.PlugBlown && SteamSimulation.Mode == Realism.Medium) error = Localizer.Translate("Eriyen tapa onarılmadan ocak yakılamaz.", "The fire can't be lit until the fusible plug is replaced.");
             if (error == null) return true;
             CabControls.Message(error);
             __result = false;
@@ -69,7 +69,7 @@ namespace SteamRailway.Patches
             if (train == null || !RailwayManager.IsOurTrain(train)) return false;
             var selectedItem = panel.GetSelectedFuelSource();
             if (selectedItem != null && selectedItem.name.StartsWith("GEAR_Coal")) return false;
-            CabControls.Message(L.T("Ocağa yalnızca kömür atılır.", "Only coal goes into the firebox."));
+            CabControls.Message(Localizer.Translate("Ocağa yalnızca kömür atılır.", "Only coal goes into the firebox."));
             return true;
         }
     }

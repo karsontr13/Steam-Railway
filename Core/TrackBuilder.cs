@@ -6,7 +6,7 @@ namespace SteamRailway
 {
     internal sealed class BuiltTrack
     {
-        public string Id;
+        public string Identifier;
         public GameObject Root;
         public CurvySpline Spline;   // the path the train follows (rail-top centre)
         public CurvePath Path;       // the same curve, densely sampled (rails, snow)
@@ -19,6 +19,7 @@ namespace SteamRailway
     /// generated along it), then lays the game's own rail piece along it.
     internal static class TrackBuilder
     {
+        const float MinimumPlainStretchInMeters = 0.4f;
         const float TrackHeightAboveTerrain = 0.3f;
 
         /// The spline and the sampled path. Rails are laid later (LayRails), once the junctions are known.
@@ -33,7 +34,7 @@ namespace SteamRailway
             var rails = new GameObject("Rails").transform;
             rails.SetParent(root.transform, false);
 
-            var built = new BuiltTrack { Id = identifier, Root = root, Spline = spline, Path = path, Rails = rails };
+            var built = new BuiltTrack { Identifier = identifier, Root = root, Spline = spline, Path = path, Rails = rails };
             if (keep != null)
                 foreach (var pair in keep)
                 {
@@ -69,34 +70,37 @@ namespace SteamRailway
             return spline;
         }
 
-        /// Lays the rail along the whole line except the kept original pieces. Turnouts change what is laid near
-        /// a junction (see Switches): the branch gets rails without sleepers under the points, the main line long
-        /// sleepers that carry both tracks.
+        /// Lays the rail along the whole line except the kept original pieces; turnouts change what is laid near a junction
+        /// (see Switches): rails without sleepers under the points, long sleepers on the main line.
         public static void LayRails(BuiltTrack track)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var plain = new List<Vector2>();
             float from = 0f;
-            foreach (var k in track.Skip)
+            // hard mode: no rail across a broken bridge that has not been repaired
+            var skipped = new List<Vector2>(track.Skip);
+            skipped.AddRange(Obstacles.UnrepairedBridgeRanges(track.Path));
+            skipped.Sort((first, second) => first.x.CompareTo(second.x));
+            foreach (var skippedRange in skipped)
             {
-                if (k.x > from + 0.4f) plain.Add(new Vector2(from, k.x));
-                from = Mathf.Max(from, k.y);
+                if (skippedRange.x > from + MinimumPlainStretchInMeters) plain.Add(new Vector2(from, skippedRange.x));
+                from = Mathf.Max(from, skippedRange.y);
             }
-            if (track.Path.Length > from + 0.4f) plain.Add(new Vector2(from, track.Path.Length));
+            if (track.Path.Length > from + MinimumPlainStretchInMeters) plain.Add(new Vector2(from, track.Path.Length));
 
             // one go along the whole line (the sleepers keep one rhythm through the points); the turnouts change
             // what is laid where through functions of the position
             var combined = Switches.Combined(track);
-            foreach (var r in plain)
+            foreach (var plainRange in plain)
             {
-                RailPieces.Lay(track.Rails, track.Path, r.x, r.y, combined);
-                track.Laid.Add(r);
+                RailPieces.Lay(track.Rails, track.Path, plainRange.x, plainRange.y, combined);
+                track.Laid.Add(plainRange);
             }
             // the branch's rails at the points (one of them the moving blade)
             var blades = Switches.Blades(track);
             foreach (var turnoutRange in blades)
-                foreach (var options in turnoutRange.Options) RailPieces.Lay(track.Rails, track.Path, turnoutRange.From, turnoutRange.To, options);
-            SteamRailwayMod.Debug($"Track '{track.Id}': spline {track.Spline.Length:F0} m, path {track.Path.Length:F0} m, {track.Laid.Count} stretch(es) of new rail, {blades.Count} set(s) of points, {stopwatch.ElapsedMilliseconds} ms.");
+                foreach (var options in turnoutRange.Options) RailPieces.Lay(track.Rails, track.Path, turnoutRange.StartPathMeters, turnoutRange.EndPathMeters, options);
+            SteamRailwayMod.Debug($"Track '{track.Identifier}': spline {track.Spline.Length:F0} m, path {track.Path.Length:F0} m, {track.Laid.Count} stretch(es) of new rail, {blades.Count} set(s) of points, {stopwatch.ElapsedMilliseconds} ms.");
         }
 
         static void LayPlain(BuiltTrack track, float firstValue, float secondValue)
@@ -108,7 +112,7 @@ namespace SteamRailway
         /// Snaps a point to the terrain surface (used by the route editor).
         public static Vector3 SnapToTerrain(Vector3 point)
         {
-            point.y = H.TerrainHeight(point, point.y) + TrackHeightAboveTerrain;
+            point.y = Il2CppHelpers.TerrainHeight(point, point.y) + TrackHeightAboveTerrain;
             return point;
         }
     }

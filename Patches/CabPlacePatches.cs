@@ -8,9 +8,8 @@ using UnityEngine;
 
 namespace SteamRailway.Patches
 {
-    /// The game forbids dropping and placing items while the player is inside a steam train (SteamTrain.ActiveSteamTrain
-    /// is set). In our locomotive items may be put down in the cab (CabItems keeps them with the train), so while one of
-    /// these checks or actions runs the active train is hidden from the game and put back right after.
+    /// The game forbids dropping and placing items while SteamTrain.ActiveSteamTrain is set; during these checks
+    /// the active train is hidden from the game and put back right after.
     [HarmonyPatch]
     internal static class CabPlace_HideTrain
     {
@@ -84,9 +83,8 @@ namespace SteamRailway.Patches
         }
     }
 
-    /// The placement aims with a ray against the colliders. The cab's colliders move with the train but the physics
-    /// scene only catches up at the next physics step, so at speed the ray hits where the cab was and the item hangs
-    /// behind the train until it is put down. Bringing the colliders up to date first keeps it in the cab.
+    /// Brings the cab's colliders up to date before the placement ray, so at speed the item lands in the cab
+    /// instead of behind the train.
     [HarmonyPatch(typeof(PlayerManager), nameof(PlayerManager.UpdatePlaceMesh))]
     internal static class CabPlace_SyncColliders
     {

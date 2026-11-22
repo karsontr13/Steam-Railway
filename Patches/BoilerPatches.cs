@@ -3,14 +3,14 @@ using Il2CppTLD.SteamTrain;
 
 namespace SteamRailway.Patches
 {
-    /// Our locomotives run on SteamSim, not on the stock engine/boiler logic.
+    /// Our locomotives run on SteamSimulation, not on the stock engine/boiler logic.
     /// SteamTrain.Update calls UpdateEngine every frame right before it moves the train, so the simulation ticks there.
     [HarmonyPatch(typeof(SteamTrainEngine), nameof(SteamTrainEngine.UpdateEngine))]
     internal static class Engine_UpdateEngine
     {
         private static bool Prefix(SteamTrainEngine __instance)
         {
-            var simulation = RailwayManager.GetSim(__instance.m_SteamTrain);
+            var simulation = RailwayManager.GetSimulation(__instance.m_SteamTrain);
             if (simulation == null) return true;
             simulation.Tick();
             return false;
@@ -19,20 +19,50 @@ namespace SteamRailway.Patches
 
     /// Getting in or out swings the modelled cab door (after a boiler explosion the player may leave whenever they like).
     [HarmonyPatch(typeof(SteamTrainDoor), nameof(SteamTrainDoor.PerformInteraction))]
+    internal static class Door_Perform_BlockOnBridge
+    {
+        private static bool Prefix(SteamTrainDoor __instance) => !DoorRules.BlocksExit(__instance);
+    }
+
+    [HarmonyPatch(typeof(SteamTrainDoor), nameof(SteamTrainDoor.PerformHold))]
+    internal static class Door_Hold_BlockOnBridge
+    {
+        private static bool Prefix(SteamTrainDoor __instance) => !DoorRules.BlocksExit(__instance);
+    }
+
+    internal static class DoorRules
+    {
+        /// Getting off our train over a broken bridge is refused (a message says why).
+        public static bool BlocksExit(SteamTrainDoor door)
+        {
+            var train = door != null ? door.m_ParentSteamTrain : null;
+            if (train == null || !train.IsInsideTrain || !RailwayManager.IsOurTrain(train) || !RailwayManager.IsOverBridge(train)) return false;
+            CabControls.Message(Localizer.Translate("Köprünün üstünde trenden inemezsin.", "You can't get off the train on the bridge."));
+            return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(SteamTrainDoor), nameof(SteamTrainDoor.PerformInteraction))]
     internal static class Door_Perform
     {
-        private static void Postfix(SteamTrainDoor __instance)
+        private static void Prefix(SteamTrainDoor __instance, out bool __state) =>
+            __state = __instance.m_ParentSteamTrain != null && __instance.m_ParentSteamTrain.IsInsideTrain;
+
+        private static void Postfix(SteamTrainDoor __instance, bool __state)
         {
-            if (RailwayManager.IsOurTrain(__instance.m_ParentSteamTrain)) LocomotiveAnimator.SwingDoor();
+            if (RailwayManager.IsOurTrain(__instance.m_ParentSteamTrain)) LocomotiveAnimator.SwingDoor(!__state);
         }
     }
 
     [HarmonyPatch(typeof(SteamTrainDoor), nameof(SteamTrainDoor.PerformHold))]
     internal static class Door_Hold
     {
-        private static void Postfix(SteamTrainDoor __instance)
+        private static void Prefix(SteamTrainDoor __instance, out bool __state) =>
+            __state = __instance.m_ParentSteamTrain != null && __instance.m_ParentSteamTrain.IsInsideTrain;
+
+        private static void Postfix(SteamTrainDoor __instance, bool __state)
         {
-            if (RailwayManager.IsOurTrain(__instance.m_ParentSteamTrain)) LocomotiveAnimator.SwingDoor();
+            if (RailwayManager.IsOurTrain(__instance.m_ParentSteamTrain)) LocomotiveAnimator.SwingDoor(!__state);
         }
     }
 
@@ -90,13 +120,13 @@ namespace SteamRailway.Patches
 namespace SteamRailway.Patches
 {
     /// The game's train update turns and locks the train's rotation from its own idea of the train's direction;
-    /// our engines keep the facing they have (SteamSim.Facing), re-applied after every update.
+    /// our engines keep the facing they have (SteamSimulation.Facing), re-applied after every update.
     [HarmonyPatch(typeof(SteamTrain), nameof(SteamTrain.Update))]
     internal static class SteamTrain_Update_Facing
     {
         private static void Postfix(SteamTrain __instance)
         {
-            var simulation = RailwayManager.GetSim(__instance);
+            var simulation = RailwayManager.GetSimulation(__instance);
             simulation?.EnforceFacing();
         }
     }

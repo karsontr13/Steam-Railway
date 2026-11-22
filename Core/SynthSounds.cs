@@ -3,30 +3,141 @@ using UnityEngine;
 
 namespace SteamRailway
 {
-    /// Generated fallback sounds (used only when the recorded clips in the bundle are missing; see Sounds/CREDITS.txt):
-    ///   Rumble  - loop: wheels rolling on the rails (low noise + body resonance)
-    ///   Clack   - one-shot: a wheel crossing a rail joint
-    ///   Whistle - loop: a three-chime steam whistle with a breathy edge
-    /// Played through Unity AudioSources on the train.
+    /// Generated fallback sounds, used only when the recorded clips in the bundle are missing:
+    /// rumble and whistle loops, rail clack, lever notch and door sounds, played on AudioSources of the train.
     internal static class SynthSounds
     {
-        const int Rate = 44100;
-        static AudioClip s_Rumble, s_Clack, s_Whistle, s_Notch;
-        static readonly System.Random s_Rng = new System.Random(1234);
+        const int SampleRateInHertz = 44100;
+
+        // ---- PlayCab, PlayLever, PlayValve, Source
+        const float DefaultCabPitch = 1f;
+        const float DefaultCabVolume = 0.8f;
+        const float CabSourceMinimumDistanceInMeters = 1.5f;
+        const float CabSourceMaximumDistanceInMeters = 25f;
+        const float CabPitchSpreadMinimum = 0.96f;
+        const float CabPitchSpreadMaximum = 1.04f;
+        const float ValveRecordedPitch = 0.8f;
+        const float ValveGeneratedPitch = 0.7f;
+        const float ValveVolume = 0.45f;
+
+        // ---- notch: a lever dropping into its notch (click of the latch, dull thud of the handle)
+        const float NotchDurationInSeconds = 0.18f;
+        const float NotchNoiseSmoothing = 0.5f;
+        const float NotchClickDecayPerSecond = 260f;
+        const float NotchThudFrequencyInHertz = 95f;
+        const float NotchThudDecayPerSecond = 38f;
+        const float NotchTickFrequencyInHertz = 2300f;
+        const float NotchTickDecayPerSecond = 180f;
+        const float NotchClickLevel = 0.9f;
+        const float NotchThudLevel = 0.8f;
+        const float NotchTickLevel = 0.15f;
+        const float NotchPeak = 0.85f;
+
+        // ---- door open: a steel latch released, then hinges creaking
+        const float DoorOpenDurationInSeconds = 0.9f;
+        const float DoorOpenNoiseSmoothing = 0.4f;
+        const float DoorOpenLatchDecayPerSecond = 140f;
+        const float DoorOpenLatchRingFrequencyInHertz = 1450f;
+        const float DoorOpenLatchRingDecayPerSecond = 60f;
+        const float DoorOpenCreakBaseFrequencyInHertz = 310f;
+        const float DoorOpenCreakWobbleDepthInHertz = 90f;
+        const float DoorOpenCreakWobbleRadiansPerSecond = 9f;
+        const float DoorOpenCreakRisePerSecondInHertz = 140f;
+        const float DoorOpenCreakStartInSeconds = 0.05f;
+        const float DoorOpenCreakFadeInPerSecond = 8f;
+        const float DoorOpenCreakDecayPerSecond = 3.2f;
+        const float DoorOpenCreakAmplitude = 0.5f;
+        const float DoorOpenCreakNoiseBase = 0.65f;
+        const float DoorOpenCreakNoiseDepth = 0.35f;
+        const float DoorOpenLatchLevel = 0.9f;
+        const float DoorOpenLatchRingLevel = 0.2f;
+        const float DoorOpenCreakLevel = 0.45f;
+        const float DoorOpenPeak = 0.8f;
+
+        // ---- door close: a heavy steel door slammed home (thud, ring of the plate, latch dropping)
+        const float DoorCloseDurationInSeconds = 0.7f;
+        const float DoorCloseNoiseSmoothing = 0.3f;
+        const float DoorCloseThudFrequencyInHertz = 70f;
+        const float DoorCloseThudDecayPerSecond = 22f;
+        const float DoorCloseSlapDecayPerSecond = 75f;
+        const float DoorClosePlateLowFrequencyInHertz = 410f;
+        const float DoorClosePlateLowWeight = 0.6f;
+        const float DoorClosePlateHighFrequencyInHertz = 880f;
+        const float DoorClosePlateHighWeight = 0.4f;
+        const float DoorClosePlateDecayPerSecond = 14f;
+        const float DoorCloseLatchDelayInSeconds = 0.09f;
+        const float DoorCloseLatchFrequencyInHertz = 1900f;
+        const float DoorCloseLatchDecayPerSecond = 120f;
+        const float DoorCloseThudLevel = 1.1f;
+        const float DoorCloseSlapLevel = 0.8f;
+        const float DoorClosePlateLevel = 0.35f;
+        const float DoorCloseLatchLevel = 0.3f;
+        const float DoorClosePeak = 0.9f;
+
+        // ---- rumble: wheels rolling on the rails (4 s seamless loop of brown noise and a low hum)
+        const int RumbleLengthInSeconds = 4;
+        const int RumbleCrossfadeDivisor = 5;
+        const float RumbleBrownStep = 0.02f;
+        const float RumbleBrownLeak = 0.995f;
+        const float RumbleNoiseSmoothing = 0.08f;
+        const float RumbleHumLowFrequencyInHertz = 47f;
+        const float RumbleHumLowLevel = 0.25f;
+        const float RumbleHumHighFrequencyInHertz = 94f;
+        const float RumbleHumHighLevel = 0.12f;
+        const float RumbleBrownGain = 3.2f;
+        const float RumbleNoiseGain = 0.35f;
+        const float RumbleHumGain = 0.35f;
+        const float RumblePeak = 0.7f;
+
+        // ---- clack: a sharp knock with a short metallic ring (a wheel over a rail joint)
+        const int ClackLengthDivisor = 4;
+        const float ClackNoiseSmoothing = 0.35f;
+        const float ClackKnockDecayPerSecond = 90f;
+        const float ClackBodyFrequencyInHertz = 120f;
+        const float ClackBodyDecayPerSecond = 30f;
+        const float ClackRingLowFrequencyInHertz = 1180f;
+        const float ClackRingLowWeight = 0.5f;
+        const float ClackRingHighFrequencyInHertz = 1730f;
+        const float ClackRingHighWeight = 0.35f;
+        const float ClackRingDecayPerSecond = 45f;
+        const float ClackKnockLevel = 1.2f;
+        const float ClackBodyLevel = 0.8f;
+        const float ClackRingLevel = 0.25f;
+        const float ClackPeak = 0.9f;
+
+        // ---- whistle: a three-chime steam whistle with a breathy edge (2 s loop)
+        const int WhistleLengthInSeconds = 2;
+        const int WhistleCrossfadeDivisor = 10;
+        const int WhistleSecondHarmonic = 2;
+        const int WhistleThirdHarmonic = 3;
+        const float WhistleSecondHarmonicLevel = 0.3f;
+        const float WhistleThirdHarmonicLevel = 0.12f;
+        const float WhistleHissSmoothing = 0.6f;
+        const float WhistleWobbleDepth = 0.06f;
+        const float WhistleWobbleRate = 3f;
+        const float WhistleToneGain = 0.3f;
+        const float WhistleHissGain = 0.18f;
+        const float WhistlePeak = 0.8f;
+        static readonly int[] WhistleChordFrequenciesInHertz = { 349, 440, 523 };
+
+        static AudioClip s_Rumble, s_Clack, s_Whistle, s_Notch, s_DoorOpen, s_DoorClose;
+        static readonly System.Random s_Random = new System.Random(1234);
 
         public static AudioClip Rumble => s_Rumble ??= Make("SR_Rumble", MakeRumble());
         public static AudioClip Clack => s_Clack ??= Make("SR_Clack", MakeClack());
         public static AudioClip Whistle => s_Whistle ??= Make("SR_Whistle", MakeWhistle());
         public static AudioClip Notch => s_Notch ??= Make("SR_Notch", MakeNotch());
+        public static AudioClip DoorOpen => s_DoorOpen ??= Make("SR_DoorOpen", MakeDoorOpen());
+        public static AudioClip DoorClose => s_DoorClose ??= Make("SR_DoorClose", MakeDoorClose());
 
         /// Plays a short cab sound (lever notch, valve turn) at the cab, with a little natural variation.
-        public static void PlayCab(Il2CppTLD.SteamTrain.SteamTrain train, AudioClip clip, float pitch = 1f, float volume = 0.8f)
+        public static void PlayCab(Il2CppTLD.SteamTrain.SteamTrain train, AudioClip clip, float pitch = DefaultCabPitch, float volume = DefaultCabVolume)
         {
             if (train == null || clip == null) return;
             var targetObject = TrainSounds.Cab(train);
-            var source = targetObject.GetComponent<AudioSource>() ?? Source(targetObject, false, 1.5f, 25f);
+            var source = targetObject.GetComponent<AudioSource>() ?? Source(targetObject, false, CabSourceMinimumDistanceInMeters, CabSourceMaximumDistanceInMeters);
             source.volume = 1f;
-            source.pitch = pitch * Random.Range(0.96f, 1.04f);
+            source.pitch = pitch * Random.Range(CabPitchSpreadMinimum, CabPitchSpreadMaximum);
             source.PlayOneShot(clip, volume);
         }
 
@@ -43,131 +154,165 @@ namespace SteamRailway
         public static void PlayValve(Il2CppTLD.SteamTrain.SteamTrain train)
         {
             var clip = LocomotiveModel.Sound("Valve");
-            PlayCab(train, clip ?? Notch, clip != null ? 0.8f : 0.7f, 0.45f);
+            PlayCab(train, clip ?? Notch, clip != null ? ValveRecordedPitch : ValveGeneratedPitch, ValveVolume);
         }
 
-        /// 0.18 s: a lever dropping into its notch - a click of the latch and a dull thud of the handle.
         static float[] MakeNotch()
         {
-            int count = (int)(Rate * 0.18f);
-            var d = new float[count];
-            float lastProgress = 0f;
+            int count = (int)(SampleRateInHertz * NotchDurationInSeconds);
+            var samples = new float[count];
+            float smoothedNoise = 0f;
             for (int index = 0; index < count; index++)
             {
-                float fraction = index / (float)Rate;
-                lastProgress += (Noise() - lastProgress) * 0.5f;
-                float click = lastProgress * Mathf.Exp(-fraction * 260f);
-                float thud = Mathf.Sin(2f * Mathf.PI * 95f * fraction) * Mathf.Exp(-fraction * 38f);
-                float tick = Mathf.Sin(2f * Mathf.PI * 2300f * fraction) * Mathf.Exp(-fraction * 180f);
-                d[index] = click * 0.9f + thud * 0.8f + tick * 0.15f;
+                float fraction = index / (float)SampleRateInHertz;
+                smoothedNoise += (Noise() - smoothedNoise) * NotchNoiseSmoothing;
+                float click = smoothedNoise * Mathf.Exp(-fraction * NotchClickDecayPerSecond);
+                float thud = Mathf.Sin(2f * Mathf.PI * NotchThudFrequencyInHertz * fraction) * Mathf.Exp(-fraction * NotchThudDecayPerSecond);
+                float tick = Mathf.Sin(2f * Mathf.PI * NotchTickFrequencyInHertz * fraction) * Mathf.Exp(-fraction * NotchTickDecayPerSecond);
+                samples[index] = click * NotchClickLevel + thud * NotchThudLevel + tick * NotchTickLevel;
             }
-            Normalize(d, 0.85f);
-            return d;
+            Normalize(samples, NotchPeak);
+            return samples;
         }
 
-        static AudioClip Make(string name, float[] data)
+        static float[] MakeDoorOpen()
         {
-            var clip = AudioClip.Create(name, data.Length, 1, Rate, false);
-            clip.SetData(new Il2CppStructArray<float>(data), 0);
+            int count = (int)(SampleRateInHertz * DoorOpenDurationInSeconds);
+            var samples = new float[count];
+            float smoothedNoise = 0f;
+            for (int index = 0; index < count; index++)
+            {
+                float seconds = index / (float)SampleRateInHertz;
+                smoothedNoise += (Noise() - smoothedNoise) * DoorOpenNoiseSmoothing;
+                float latch = smoothedNoise * Mathf.Exp(-seconds * DoorOpenLatchDecayPerSecond);
+                float latchRing = Mathf.Sin(2f * Mathf.PI * DoorOpenLatchRingFrequencyInHertz * seconds) * Mathf.Exp(-seconds * DoorOpenLatchRingDecayPerSecond);
+                float creakPitch = DoorOpenCreakBaseFrequencyInHertz + DoorOpenCreakWobbleDepthInHertz * Mathf.Sin(seconds * DoorOpenCreakWobbleRadiansPerSecond) + DoorOpenCreakRisePerSecondInHertz * seconds;
+                float creakLevel = Mathf.Clamp01((seconds - DoorOpenCreakStartInSeconds) * DoorOpenCreakFadeInPerSecond) * Mathf.Exp(-(seconds - DoorOpenCreakStartInSeconds) * DoorOpenCreakDecayPerSecond);
+                float creak = Mathf.Sin(2f * Mathf.PI * creakPitch * seconds) * DoorOpenCreakAmplitude * creakLevel * (DoorOpenCreakNoiseBase + DoorOpenCreakNoiseDepth * Noise());
+                samples[index] = latch * DoorOpenLatchLevel + latchRing * DoorOpenLatchRingLevel + creak * DoorOpenCreakLevel;
+            }
+            Normalize(samples, DoorOpenPeak);
+            return samples;
+        }
+
+        static float[] MakeDoorClose()
+        {
+            int count = (int)(SampleRateInHertz * DoorCloseDurationInSeconds);
+            var samples = new float[count];
+            float smoothedNoise = 0f;
+            for (int index = 0; index < count; index++)
+            {
+                float seconds = index / (float)SampleRateInHertz;
+                smoothedNoise += (Noise() - smoothedNoise) * DoorCloseNoiseSmoothing;
+                float thud = Mathf.Sin(2f * Mathf.PI * DoorCloseThudFrequencyInHertz * seconds) * Mathf.Exp(-seconds * DoorCloseThudDecayPerSecond);
+                float slap = smoothedNoise * Mathf.Exp(-seconds * DoorCloseSlapDecayPerSecond);
+                float plate = (DoorClosePlateLowWeight * Mathf.Sin(2f * Mathf.PI * DoorClosePlateLowFrequencyInHertz * seconds) + DoorClosePlateHighWeight * Mathf.Sin(2f * Mathf.PI * DoorClosePlateHighFrequencyInHertz * seconds)) * Mathf.Exp(-seconds * DoorClosePlateDecayPerSecond);
+                float latchSeconds = seconds - DoorCloseLatchDelayInSeconds;
+                float latch = latchSeconds > 0f ? Mathf.Sin(2f * Mathf.PI * DoorCloseLatchFrequencyInHertz * latchSeconds) * Mathf.Exp(-latchSeconds * DoorCloseLatchDecayPerSecond) : 0f;
+                samples[index] = thud * DoorCloseThudLevel + slap * DoorCloseSlapLevel + plate * DoorClosePlateLevel + latch * DoorCloseLatchLevel;
+            }
+            Normalize(samples, DoorClosePeak);
+            return samples;
+        }
+
+        static AudioClip Make(string clipName, float[] samples)
+        {
+            var clip = AudioClip.Create(clipName, samples.Length, 1, SampleRateInHertz, false);
+            clip.SetData(new Il2CppStructArray<float>(samples), 0);
             clip.hideFlags = HideFlags.DontUnloadUnusedAsset;
             Object.DontDestroyOnLoad(clip);
             return clip;
         }
 
-        static float Noise() => (float)(s_Rng.NextDouble() * 2.0 - 1.0);
+        static float Noise() => (float)(s_Random.NextDouble() * 2.0 - 1.0);
 
-        /// 4 s seamless loop: brown noise (track roar) + low hum of the frames.
         static float[] MakeRumble()
         {
-            int count = Rate * 4;
-            var d = new float[count];
-            float brown = 0f, lastProgress = 0f;
+            int count = SampleRateInHertz * RumbleLengthInSeconds;
+            var samples = new float[count];
+            float brown = 0f, smoothedNoise = 0f;
             for (int index = 0; index < count; index++)
             {
-                brown = (brown + 0.02f * Noise()) * 0.995f;
-                lastProgress += (Noise() - lastProgress) * 0.08f;
-                float fraction = index / (float)Rate;
-                float humidity = 0.25f * Mathf.Sin(2f * Mathf.PI * 47f * fraction) + 0.12f * Mathf.Sin(2f * Mathf.PI * 94f * fraction);
-                d[index] = brown * 3.2f + lastProgress * 0.35f + humidity * 0.35f;
+                brown = (brown + RumbleBrownStep * Noise()) * RumbleBrownLeak;
+                smoothedNoise += (Noise() - smoothedNoise) * RumbleNoiseSmoothing;
+                float fraction = index / (float)SampleRateInHertz;
+                float hum = RumbleHumLowLevel * Mathf.Sin(2f * Mathf.PI * RumbleHumLowFrequencyInHertz * fraction) + RumbleHumHighLevel * Mathf.Sin(2f * Mathf.PI * RumbleHumHighFrequencyInHertz * fraction);
+                samples[index] = brown * RumbleBrownGain + smoothedNoise * RumbleNoiseGain + hum * RumbleHumGain;
             }
-            d = Crossfade(d, Rate / 5);
-            Normalize(d, 0.7f);
-            return d;
+            samples = Crossfade(samples, SampleRateInHertz / RumbleCrossfadeDivisor);
+            Normalize(samples, RumblePeak);
+            return samples;
         }
 
-        /// 0.25 s: a sharp knock with a short metallic ring (a wheel over a rail joint).
         static float[] MakeClack()
         {
-            int count = Rate / 4;
-            var d = new float[count];
-            float lastProgress = 0f;
+            int count = SampleRateInHertz / ClackLengthDivisor;
+            var samples = new float[count];
+            float smoothedNoise = 0f;
             for (int index = 0; index < count; index++)
             {
-                float fraction = index / (float)Rate;
-                lastProgress += (Noise() - lastProgress) * 0.35f;
-                float knock = lastProgress * Mathf.Exp(-fraction * 90f);
-                float body = Mathf.Sin(2f * Mathf.PI * 120f * fraction) * Mathf.Exp(-fraction * 30f);
-                float ring = (0.5f * Mathf.Sin(2f * Mathf.PI * 1180f * fraction) + 0.35f * Mathf.Sin(2f * Mathf.PI * 1730f * fraction)) * Mathf.Exp(-fraction * 45f);
-                d[index] = knock * 1.2f + body * 0.8f + ring * 0.25f;
+                float fraction = index / (float)SampleRateInHertz;
+                smoothedNoise += (Noise() - smoothedNoise) * ClackNoiseSmoothing;
+                float knock = smoothedNoise * Mathf.Exp(-fraction * ClackKnockDecayPerSecond);
+                float body = Mathf.Sin(2f * Mathf.PI * ClackBodyFrequencyInHertz * fraction) * Mathf.Exp(-fraction * ClackBodyDecayPerSecond);
+                float ring = (ClackRingLowWeight * Mathf.Sin(2f * Mathf.PI * ClackRingLowFrequencyInHertz * fraction) + ClackRingHighWeight * Mathf.Sin(2f * Mathf.PI * ClackRingHighFrequencyInHertz * fraction)) * Mathf.Exp(-fraction * ClackRingDecayPerSecond);
+                samples[index] = knock * ClackKnockLevel + body * ClackBodyLevel + ring * ClackRingLevel;
             }
-            Normalize(d, 0.9f);
-            return d;
+            Normalize(samples, ClackPeak);
+            return samples;
         }
 
-        /// 2 s loop: a three-chime steam whistle with a breathy edge.
         static float[] MakeWhistle()
         {
-            int count = Rate * 2;
-            var d = new float[count];
-            int[] f = { 349, 440, 523 };
+            int count = SampleRateInHertz * WhistleLengthInSeconds;
+            var samples = new float[count];
             float hiss = 0f;
             for (int index = 0; index < count; index++)
             {
-                float fraction = index / (float)Rate;
+                float fraction = index / (float)SampleRateInHertz;
                 float tone = 0f;
-                foreach (int fr in f)
-                    tone += Mathf.Sin(2f * Mathf.PI * fr * fraction) + 0.3f * Mathf.Sin(2f * Mathf.PI * fr * 2 * fraction) + 0.12f * Mathf.Sin(2f * Mathf.PI * fr * 3 * fraction);
-                hiss += (Noise() - hiss) * 0.6f;
-                float wobble = 1f + 0.06f * Mathf.Sin(2f * Mathf.PI * 3f * fraction);
-                d[index] = tone * 0.3f * wobble + hiss * 0.18f;
+                foreach (int frequencyInHertz in WhistleChordFrequenciesInHertz)
+                    tone += Mathf.Sin(2f * Mathf.PI * frequencyInHertz * fraction) + WhistleSecondHarmonicLevel * Mathf.Sin(2f * Mathf.PI * frequencyInHertz * WhistleSecondHarmonic * fraction) + WhistleThirdHarmonicLevel * Mathf.Sin(2f * Mathf.PI * frequencyInHertz * WhistleThirdHarmonic * fraction);
+                hiss += (Noise() - hiss) * WhistleHissSmoothing;
+                float wobble = 1f + WhistleWobbleDepth * Mathf.Sin(2f * Mathf.PI * WhistleWobbleRate * fraction);
+                samples[index] = tone * WhistleToneGain * wobble + hiss * WhistleHissGain;
             }
-            d = Crossfade(d, Rate / 10);
-            Normalize(d, 0.8f);
-            return d;
+            samples = Crossfade(samples, SampleRateInHertz / WhistleCrossfadeDivisor);
+            Normalize(samples, WhistlePeak);
+            return samples;
         }
 
-        /// Blends the end into the start so a looping clip has no click.
-        /// The last `len` samples are faded into the first ones and cut off: the new end runs straight into the start.
-        static float[] Crossfade(float[] d, int len)
+        /// Fades the last `fadeLength` samples into the first ones and cuts them off, so a looping clip has no click.
+        static float[] Crossfade(float[] samples, int fadeLength)
         {
-            int count = d.Length;
-            for (int index = 0; index < len; index++)
+            int count = samples.Length;
+            for (int index = 0; index < fadeLength; index++)
             {
-                float firstValue = index / (float)len;
-                d[index] = d[index] * firstValue + d[count - len + index] * (1f - firstValue);
+                float blend = index / (float)fadeLength;
+                samples[index] = samples[index] * blend + samples[count - fadeLength + index] * (1f - blend);
             }
-            System.Array.Resize(ref d, count - len);
-            return d;
+            System.Array.Resize(ref samples, count - fadeLength);
+            return samples;
         }
 
-        static void Normalize(float[] d, float peak)
+        static void Normalize(float[] samples, float peak)
         {
-            float meters = 0f;
-            foreach (var value in d) meters = Mathf.Max(meters, Mathf.Abs(value));
-            if (meters <= 0f) return;
-            float scale = peak / meters;
-            for (int index = 0; index < d.Length; index++) d[index] *= scale;
+            float loudest = 0f;
+            foreach (var sample in samples) loudest = Mathf.Max(loudest, Mathf.Abs(sample));
+            if (loudest <= 0f) return;
+            float scale = peak / loudest;
+            for (int index = 0; index < samples.Length; index++) samples[index] *= scale;
         }
 
-        public static AudioSource Source(GameObject targetObject, bool loop, float minDist, float maxDist)
+        public static AudioSource Source(GameObject targetObject, bool loop, float minimumDistanceInMeters, float maximumDistanceInMeters)
         {
             var source = targetObject.AddComponent<AudioSource>();
             source.loop = loop;
             source.playOnAwake = false;
             source.spatialBlend = 1f;
             source.rolloffMode = AudioRolloffMode.Linear;
-            source.minDistance = minDist;
-            source.maxDistance = maxDist;
+            source.minDistance = minimumDistanceInMeters;
+            source.maxDistance = maximumDistanceInMeters;
             source.dopplerLevel = 0f;
             source.volume = 0f;
             return source;

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using MelonLoader.Utils;
 using UnityEngine;
 
@@ -9,7 +10,7 @@ namespace SteamRailway
     /// One railway line inside one scene: an ordered list of world-space control points.
     internal sealed class RouteData
     {
-        public string Id { get; set; } = "route";
+        [JsonPropertyName("Id")] public string Identifier { get; set; } = "route";
         public List<float[]> Points { get; set; } = new List<float[]>();
 
         public Vector3 GetPoint(int index) => new Vector3(Points[index][0], Points[index][1], Points[index][2]);
@@ -39,9 +40,9 @@ namespace SteamRailway
                 if (File.Exists(FilePath))
                     s_File = JsonSerializer.Deserialize<RouteFile>(File.ReadAllText(FilePath), s_Json) ?? new RouteFile();
             }
-            catch (System.Exception e)
+            catch (System.Exception exception)
             {
-                SteamRailwayMod.Log.Error($"routes.json could not be read: {e.Message}");
+                SteamRailwayMod.Log.Error($"routes.json could not be read: {exception.Message}");
                 s_File = new RouteFile();
             }
         }

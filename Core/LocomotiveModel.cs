@@ -3,51 +3,57 @@ using UnityEngine;
 
 namespace SteamRailway
 {
-    /// Loads the locomotive model from Mods\SteamRailway\steamrailway.bundle (built by Unity\Editor\SteamRailwayBundle.cs).
-    /// The bundle holds meshes, the palette texture and empty Socket_ transforms only. Materials are built here with
-    /// the game's own shaders so the model is lit like the rest of the world:
-    ///   Glass_*  -> TLD_StandardTransparent (see-through windows / gauge glasses)
-    ///   Dials    -> TLD_StandardDiffuse with Cab_Dials (dial faces and instrument plates, Tools/DialPainter)
-    ///   Col_*    -> invisible box colliders (the solid hull)
-    ///   others   -> TLD_StandardDiffuse with the palette texture
+    /// Loads the locomotive model from the bundle (meshes, palette texture, empty sockets) and builds its materials
+    /// from the game's own shaders: Glass_* transparent, Dials diffuse, Col_* invisible colliders, the rest palette.
     internal static class LocomotiveModel
     {
         const string BundleFile = "steamrailway.bundle";
         const string PrefabName = "SteamRailway_Locomotive";
         const string PaletteName = "Loco_Palette";
+        const string CouplerPartnerPrefix = "CouplerPartner";
+        const string CouplerRearLockedName = "CouplerRear_Locked";
         const string DialsName = "Cab_Dials";
         const string DiffuseShader = "Shader Forge/TLD_StandardDiffuse";
         const string TransparentShader = "Shader Forge/TLD_StandardTransparent";
-        static readonly Color GlassTint = new Color(0.55f, 0.6f, 0.65f, 0.22f);
+        const float GlassRed = 0.55f;
+        const float GlassGreen = 0.6f;
+        const float GlassBlue = 0.65f;
+        const float GlassAlpha = 0.22f;
+        const float DialsDetailTiling = 4f;
+        const float DialsDetailStrength = -0.08f;
+        const string DetailOverlayProperty = "_DetailOverlay";
+        static readonly Color GlassTint = new Color(GlassRed, GlassGreen, GlassBlue, GlassAlpha);
 
         static bool s_Tried;
         static AssetBundle s_Bundle;
         static readonly System.Collections.Generic.Dictionary<string, AudioClip> s_Sounds = new System.Collections.Generic.Dictionary<string, AudioClip>();
         static GameObject s_Prefab;
-        static Texture2D s_Palette, s_DialsTex;
-        static Material s_Material, s_Glass, s_Dials;
+        static Texture2D s_Palette;
+        static Texture2D s_DialsTexture;
+        static Material s_Material;
+        static Material s_Glass;
+        static Material s_Dials;
 
         /// The game unloads unused assets when a region changes; anything taken from the bundle must be marked
         /// so it survives, and is loaded again below if it was lost anyway.
-        static T Keep<T>(T o) where T : Object
+        static AssetType Keep<AssetType>(AssetType asset) where AssetType : Object
         {
-            if (o != null)
+            if (asset != null)
             {
-                o.hideFlags |= HideFlags.DontUnloadUnusedAsset;
-                Object.DontDestroyOnLoad(o);
+                asset.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+                Object.DontDestroyOnLoad(asset);
             }
-            return o;
+            return asset;
         }
 
-        /// The bundle is carried inside the DLL. Unity loads it from a file, so it is written to a cache folder in
-        /// UserData (again whenever it differs from the copy in the DLL). Handing the 12 MB to the game as an Il2Cpp
-        /// array did not work: the array was collected before the game had read it.
+        /// The bundle is carried inside the DLL; Unity loads it from a file, so it is written to a cache folder
+        /// in UserData whenever it differs from the copy in the DLL.
         static AssetBundle LoadBundle()
         {
             var assembly = System.Reflection.Assembly.GetExecutingAssembly();
             string path = null;
             try { path = ExtractBundle(assembly); }
-            catch (System.Exception e) { SteamRailwayMod.Log.Warning($"{BundleFile} could not be unpacked from the DLL: {e.Message}"); }
+            catch (System.Exception exception) { SteamRailwayMod.Log.Warning($"{BundleFile} could not be unpacked from the DLL: {exception.Message}"); }
             if (path == null) path = Path.Combine(RouteStore.FolderPath, BundleFile);
             if (!File.Exists(path))
             {
@@ -97,7 +103,7 @@ namespace SteamRailway
             bool again = s_Prefab != null || s_Material != null;
             s_Prefab = Keep(s_Bundle.LoadAsset<GameObject>(PrefabName));
             s_Palette = Keep(s_Bundle.LoadAsset<Texture2D>(PaletteName));
-            s_DialsTex = Keep(s_Bundle.LoadAsset<Texture2D>(DialsName));
+            s_DialsTexture = Keep(s_Bundle.LoadAsset<Texture2D>(DialsName));
             if (s_Prefab == null) { SteamRailwayMod.Log.Error($"{PrefabName} missing in {BundleFile}."); return false; }
             SteamRailwayMod.Log.Msg(again ? $"Locomotive model reloaded ({BundleFile})." : $"Locomotive model loaded ({BundleFile}).");
             return true;
@@ -116,26 +122,27 @@ namespace SteamRailway
             return null;
         }
 
-        const float DetailTiling = 64f, DetailStrength = -0.05f;
+        const float DetailTiling = 64f;
+        const float DetailStrength = -0.05f;
         static Texture s_Detail;
 
         /// The game's painterly look comes from a tiled noise overlay (_DetailOverlay) on TLD_StandardDiffuse.
         /// Borrow that texture from any loaded game material.
         static void ApplyDetail(Material material, float tiling, float strength)
         {
-            if (material == null || !material.HasProperty("_DetailOverlay")) return;
+            if (material == null || !material.HasProperty(DetailOverlayProperty)) return;
             if (s_Detail == null)
             {
                 foreach (var renderer in Object.FindObjectsOfType<Renderer>())
                 {
                     var glassMaterial = renderer.sharedMaterial;
-                    if (glassMaterial == null || !glassMaterial.HasProperty("_DetailOverlay")) continue;
-                    var texture = glassMaterial.GetTexture("_DetailOverlay");
+                    if (glassMaterial == null || !glassMaterial.HasProperty(DetailOverlayProperty)) continue;
+                    var texture = glassMaterial.GetTexture(DetailOverlayProperty);
                     if (texture != null) { s_Detail = texture; break; }
                 }
             }
             if (s_Detail == null) return;
-            material.SetTexture("_DetailOverlay", s_Detail);
+            material.SetTexture(DetailOverlayProperty, s_Detail);
             material.SetFloat("_DetailTiling", tiling);
             material.SetFloat("_DetailStrength", strength);
         }
@@ -155,9 +162,9 @@ namespace SteamRailway
             {
                 s_Dials = GameMaterial(DiffuseShader) ?? new Material(s_Material);
                 s_Dials.name = "SteamRailway_Dials";
-                s_Dials.mainTexture = s_DialsTex != null ? s_DialsTex : s_Palette;
+                s_Dials.mainTexture = s_DialsTexture != null ? s_DialsTexture : s_Palette;
                 if (s_Dials.HasProperty("_Color")) s_Dials.color = Color.white;
-                ApplyDetail(s_Dials, 4f, -0.08f);
+                ApplyDetail(s_Dials, DialsDetailTiling, DialsDetailStrength);
                 Keep(s_Dials);
             }
             if (s_Glass == null)
@@ -193,21 +200,26 @@ namespace SteamRailway
             }
             foreach (var meshRenderer in targetObject.GetComponentsInChildren<MeshRenderer>(true))
             {
-                string n = meshRenderer.name;
-                if (n.StartsWith("Col_"))
+                string partName = meshRenderer.name;
+                if (partName.StartsWith("Col_"))
                 {
                     var meshFilter = meshRenderer.GetComponent<MeshFilter>();
                     var box = meshRenderer.gameObject.AddComponent<BoxCollider>();
                     if (meshFilter != null && meshFilter.sharedMesh != null) { box.center = meshFilter.sharedMesh.bounds.center; box.size = meshFilter.sharedMesh.bounds.size; }
                     meshRenderer.enabled = false;
                 }
-                else if (n.StartsWith("Glass_"))
+                else if (partName.StartsWith("Glass_"))
                 {
                     if (s_Glass != null) { meshRenderer.sharedMaterial = s_Glass; meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; }
                     else meshRenderer.enabled = false;
                 }
-                else if (n == "Dials") meshRenderer.sharedMaterial = s_Dials;
-                else meshRenderer.sharedMaterial = s_Material;
+                else if (partName == "Dials") meshRenderer.sharedMaterial = s_Dials;
+                else
+                {
+                    meshRenderer.sharedMaterial = s_Material;
+                    // Wagons switches the locked coupler pose on when a wagon is locked on
+                    if (partName.StartsWith(CouplerPartnerPrefix) || partName == CouplerRearLockedName) meshRenderer.gameObject.SetActive(false);
+                }
             }
             return targetObject;
         }
@@ -230,9 +242,8 @@ namespace SteamRailway
             return targetObject;
         }
 
-        /// A sound clip from the bundle (Sounds/*.wav, see Sounds/CREDITS.txt); null if missing.
         static GameObject s_SmokePrefab;
-        static Texture2D s_SmokeTex;
+        static Texture2D s_SmokeTexture;
 
         /// The chimney smoke particle system and its sprite sheet (see SteamRailwayBundle.BuildSmoke).
         public static bool SmokeAssets(out GameObject prefab, out Texture2D sheet)
@@ -240,10 +251,10 @@ namespace SteamRailway
             if (s_SmokePrefab == null && Load() && s_Bundle != null)
             {
                 s_SmokePrefab = Keep(s_Bundle.LoadAsset<GameObject>("LocoSmoke"));
-                s_SmokeTex = Keep(s_Bundle.LoadAsset<Texture2D>("Smoke_Sheet"));
+                s_SmokeTexture = Keep(s_Bundle.LoadAsset<Texture2D>("Smoke_Sheet"));
             }
             prefab = s_SmokePrefab;
-            sheet = s_SmokeTex;
+            sheet = s_SmokeTexture;
             return prefab != null && sheet != null;
         }
 
@@ -256,9 +267,10 @@ namespace SteamRailway
             return s_BlastPrefab;
         }
 
+        /// A sound clip from the bundle (Sounds/*.wav); null if missing.
         public static AudioClip Sound(string name)
         {
-            if (s_Sounds.TryGetValue(name, out var c) && (c != null || s_Bundle == null)) return c;
+            if (s_Sounds.TryGetValue(name, out var cachedClip) && (cachedClip != null || s_Bundle == null)) return cachedClip;
             AudioClip clip = null;
             if (Load() && s_Bundle != null)
             {

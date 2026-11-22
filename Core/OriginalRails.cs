@@ -1,11 +1,11 @@
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using UnityEngine;
 
 namespace SteamRailway
 {
-    /// One railway line found in a region: control points along the (smoothed) rail-top centre, and the stretches
-    /// where an original piece that carries a structure (a trestle bridge) stays; everywhere else the line gets
-    /// continuous new rail and the original pieces are hidden.
+    /// One railway line found in a region: control points along the smoothed rail-top centre and the stretches
+    /// where an original piece carrying a structure (a trestle bridge) stays; elsewhere new rail replaces the pieces.
     internal sealed class RailLine
     {
         public readonly List<Vector3> Points = new List<Vector3>();
@@ -18,12 +18,11 @@ namespace SteamRailway
     internal sealed class PieceRef
     {
         public string Name { get; set; }
-        public float[] Pos { get; set; }
+        [JsonPropertyName("Pos")] public float[] Position { get; set; }
         public bool Keep { get; set; }
     }
 
-    /// A region's lines as written to Mods\SteamRailway\Lines\<region>.json: made once from the original pieces,
-    /// then read back. Set Locked to keep hand edits when the mod's
+    /// A region's lines as written to Mods\SteamRailway\Lines\<region>.json; Locked keeps hand edits when the
     /// line finder changes.
     internal sealed class LineFile
     {
@@ -39,37 +38,89 @@ namespace SteamRailway
         public List<PieceRef> Pieces { get; set; } = new List<PieceRef>();
     }
 
-    /// Reads the game's own track pieces in the loaded region and joins them into lines. Every piece type
-    /// (straights, bends, trestle bridge pieces ...) gets its centreline from its own mesh: the rail heads are the
-    /// highest vertices, and they lie either on two parallel lines or on two concentric arcs.
+    /// Reads the game's own track pieces in the loaded region and joins them into lines; each centreline comes from
+    /// the piece's own mesh (the rail heads are the highest vertices: two parallel lines or two concentric arcs).
     internal static class OriginalRails
     {
-        const float MaxGap = 80f;          // farthest two pieces may be apart and still belong to one line
-        const float MaxOverlap = 30f;      // the artists overlap neighbouring pieces by up to ~15 m
-        const float PointSpacing = 8f;
-        const float MinLineLength = 30f;     // one original piece is enough (a short siding behind a switch)
+        const float RailHeadHeightToleranceInMeters = 0.03f;
+        static readonly float[] SearchRadiiInMeters = { 300f, 12f, 1.2f };
+        static readonly float[] SearchStepsInMeters = { 6f, 0.4f, 0.03f };
+        const int MinimumRailHeadPointCount = 8;
+        const float MaximumStraightFitError = 0.003f;
+        const float MinimumRailSeparationInMeters = 1.2f;
+        const int SearchPassCount = 3;
+        const float CoarseMinimumRingGapInMeters = 0.8f;
+        const float FineMinimumRingGapInMeters = 1.3f;
+        const float CoarseMaximumRingGapInMeters = 3f;
+        const float FineMaximumRingGapInMeters = 2.1f;
+        const float BendPointSpacingInMeters = 2f;
+        const float BuiltInStructureMinimumY = -1.0f;
+        const int MinimumClusterValueCount = 4;
+        const int MinimumClusterSize = 2;
+        const float SamePieceToleranceInMeters = 0.5f;
+        const float LevelToleranceInMeters = 3f;
+        const float LevelToleranceGrowthPerMeter = 0.1f;
+        const float MinimumHeadOnDot = 0.5f;
+        const float LateralToleranceInMeters = 3f;
+        const float LateralToleranceGrowthPerMeter = 1.2f;
+        const float LateralScoreWeight = 2f;
+        const float MinimumSegmentLengthSquared = 1e-6f;
+        const float OverlapMarginInMeters = 1f;
+        const float GapCurveStepInMeters = 6f;
+        const int ControlPointStride = 2;
+        const float ResampleEndToleranceInMeters = 0.5f;
+        const float TaubinShrinkFactor = 0.5f;
+        const float TaubinInflateFactor = -0.53f;
+        const int KeepEndOffset = 3;
+        const float PieceMatchToleranceInSquareMeters = 0.01f;
+        const float MinimumSegmentLengthInMeters = 1e-4f;
+        const float MinimumPointSpacingInMeters = 1f;
+        const float StrayPieceReachInMeters = 2.5f;
+        const float StrayPieceBelowInMeters = 1.5f;
+        const float MinimumPathLengthInMeters = 0.01f;
+        const float ObstacleProbeStepInMeters = 1.5f;
+        const float ProbeBoxCenterHeightInMeters = 2.1f;
+        const float ProbeBoxHalfWidthInMeters = 1.35f;
+        const float ProbeBoxHalfHeightInMeters = 1.95f;
+        const float ProbeBoxHalfLengthInMeters = 0.8f;
+        const float MaximumClearableWidthInMeters = 25f;
+        const float MaximumClearableHeightInMeters = 20f;
+        const int Vector3ComponentCount = 3;
+        const float MarkedTreeMatchDistanceInMeters = 0.6f;
+        const float DefaultMaximumObjectSizeInMeters = 18f;
+        const float MaximumObjectHeightInMeters = 12f;
+        const float CorridorSampleSpacingInMeters = 2f;
+        const int MaximumCorridorSamples = 24;
+        const float CorridorMarginInMeters = 2f;
+        const float CorridorBelowRailInMeters = 0.25f;
+        const float CorridorHeightAboveRailInMeters = 4.5f;
+        const int RoundingDecimalPlaces = 3;
+        const float MaximumGapInMeters = 80f;          // farthest two pieces may be apart and still belong to one line
+        const float MaximumOverlapInMeters = 30f;      // the artists overlap neighbouring pieces by up to ~15 m
+        const float PointSpacingInMeters = 8f;
+        const float MinimumLineLengthInMeters = 30f;     // one original piece is enough (a short siding behind a switch)
         const float BendPenalty = 25f;     // at a switch the straight road wins over the bend into the siding
 
         /// Centreline of one piece type in its own space, start to end, at rail-head height.
         sealed class Shape
         {
-            public Vector3[] Pts;
+            public Vector3[] Points;
             public bool Bend;
             public bool Keep;              // carries a structure (bridge) besides the rails: never replaced
         }
 
         sealed class Piece
         {
-            public int Id;                 // the piece's transform
-            public Transform T;
-            public Vector3[] Pts;          // world centreline, A = Pts[0], B = Pts[^1]
+            public int InstanceId;                 // the piece's transform
+            public Transform PieceTransform;
+            public Vector3[] WorldPoints;          // world centreline, A = Pts[0], B = Pts[^1]
             public bool Bend;
             public bool Keep;
-            public readonly List<Transform> Dups = new List<Transform>();   // the same piece placed again
-            public Vector3 A => Pts[0];
-            public Vector3 B => Pts[Pts.Length - 1];
-            public Vector3 OutA => Flat(Pts[0] - Pts[1]);
-            public Vector3 OutB => Flat(Pts[Pts.Length - 1] - Pts[Pts.Length - 2]);
+            public readonly List<Transform> Duplicates = new List<Transform>();   // the same piece placed again
+            public Vector3 StartPoint => WorldPoints[0];
+            public Vector3 EndPoint => WorldPoints[WorldPoints.Length - 1];
+            public Vector3 StartOutwardDirection => Flat(WorldPoints[0] - WorldPoints[1]);
+            public Vector3 EndOutwardDirection => Flat(WorldPoints[WorldPoints.Length - 1] - WorldPoints[WorldPoints.Length - 2]);
         }
 
         static readonly Dictionary<int, Shape> s_Shapes = new Dictionary<int, Shape>();   // by mesh instance (names repeat)
@@ -106,11 +157,11 @@ namespace SteamRailway
                 if (pieceTransform.gameObject.scene.name == null || !pieceTransform.gameObject.activeInHierarchy || !IsTrackPiece(pieceTransform.name)) continue;
                 var shape = ShapeOf(pieceTransform, out var space);
                 if (shape == null) continue;
-                var worldPoints = new Vector3[shape.Pts.Length];
-                for (int index = 0; index < worldPoints.Length; index++) worldPoints[index] = space.TransformPoint(shape.Pts[index]);
-                var piece = new Piece { Pts = worldPoints, Bend = shape.Bend, Keep = shape.Keep, Id = pieceTransform.GetInstanceID(), T = pieceTransform };
+                var worldPoints = new Vector3[shape.Points.Length];
+                for (int index = 0; index < worldPoints.Length; index++) worldPoints[index] = space.TransformPoint(shape.Points[index]);
+                var piece = new Piece { WorldPoints = worldPoints, Bend = shape.Bend, Keep = shape.Keep, InstanceId = pieceTransform.GetInstanceID(), PieceTransform = pieceTransform };
                 var twin = pieces.Find(other => Same(other, piece));
-                if (twin != null) { twin.Dups.Add(pieceTransform); continue; }
+                if (twin != null) { twin.Duplicates.Add(pieceTransform); continue; }
                 pieces.Add(piece);
             }
             return pieces;
@@ -170,7 +221,7 @@ namespace SteamRailway
                 }
 
                 var line = Build(chain);
-                if (line != null && line.Length >= MinLineLength)
+                if (line != null && line.Length >= MinimumLineLengthInMeters)
                 {
                     lines.Add(line);
                     RecordLine(line, chain);
@@ -184,13 +235,13 @@ namespace SteamRailway
             foreach (var link in chain)
             {
                 var piece = link.piece;
-                s_UsedPieces.Add(piece.Id);
-                line.Used.Add(Ref(piece.T, piece.Keep));
-                if (!piece.Keep) line.Replaced.Add(piece.T);
-                foreach (var duplicate in piece.Dups)
+                s_UsedPieces.Add(piece.InstanceId);
+                line.Used.Add(ToPieceRef(piece.PieceTransform, piece.Keep));
+                if (!piece.Keep) line.Replaced.Add(piece.PieceTransform);
+                foreach (var duplicate in piece.Duplicates)
                 {
                     s_UsedPieces.Add(duplicate.GetInstanceID());
-                    line.Used.Add(Ref(duplicate, piece.Keep));
+                    line.Used.Add(ToPieceRef(duplicate, piece.Keep));
                     if (!piece.Keep) line.Replaced.Add(duplicate);
                 }
             }
@@ -207,29 +258,29 @@ namespace SteamRailway
             if (meshFilter == null)
             {
                 if (!piece.name.Contains("Strait") && !piece.name.Contains("Straight")) return null;
-                return StraightA();
+                return StraightPieceShape();
             }
             space = meshFilter.transform;
             var mesh = meshFilter.sharedMesh;
             if (s_Shapes.TryGetValue(mesh.GetInstanceID(), out var cached)) return cached;
             Shape shape = null;
             try { shape = Fit(mesh); }
-            catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Rail piece {mesh.name}: {e.Message}"); }
+            catch (System.Exception exception) { SteamRailwayMod.Log.Warning($"Rail piece {mesh.name}: {exception.Message}"); }
             // geometry well below the rails = a bridge or trestle built into the piece
-            if (shape != null) shape.Keep = mesh.bounds.min.y < -1.0f;
+            if (shape != null) shape.Keep = mesh.bounds.min.y < BuiltInStructureMinimumY;
             s_Shapes[mesh.GetInstanceID()] = shape;
             if (shape != null)
-                SteamRailwayMod.Debug($"Rail piece {mesh.name}: {(shape.Bend ? "bend" : "straight")}, {shape.Pts.Length} points, {Length(shape.Pts):F1} m.");
+                SteamRailwayMod.Debug($"Rail piece {mesh.name}: {(shape.Bend ? "bend" : "straight")}, {shape.Points.Length} points, {Length(shape.Points):F1} m.");
             return shape;
         }
 
-        static Shape s_StraightA;
-        static Shape StraightA()
+        static Shape s_StraightPieceShape;
+        static Shape StraightPieceShape()
         {
-            if (s_StraightA != null) return s_StraightA;
-            var start = new Vector3(RailPieces.CentreX, RailPieces.RailTop, RailPieces.SrcZ0);
-            var end = new Vector3(RailPieces.CentreX, RailPieces.RailTop, RailPieces.SrcZ1);
-            return s_StraightA = new Shape { Pts = new[] { start, end }, Bend = false };
+            if (s_StraightPieceShape != null) return s_StraightPieceShape;
+            var start = new Vector3(RailPieces.CentreX, RailPieces.RailTop, RailPieces.SourceStartZ);
+            var end = new Vector3(RailPieces.CentreX, RailPieces.RailTop, RailPieces.SourceEndZ);
+            return s_StraightPieceShape = new Shape { Points = new[] { start, end }, Bend = false };
         }
 
         /// The most detailed readable mesh of the piece (LOD0).
@@ -248,164 +299,163 @@ namespace SteamRailway
         /// Rail heads = the highest vertices. Two parallel lines -> straight; two concentric arcs -> bend.
         static Shape Fit(Mesh mesh)
         {
-            var verts = mesh.vertices;
-            float ymax = float.MinValue;
-            for (int index = 0; index < verts.Length; index++) ymax = Mathf.Max(ymax, verts[index].y);
+            var vertices = mesh.vertices;
+            float highestY = float.MinValue;
+            for (int index = 0; index < vertices.Length; index++) highestY = Mathf.Max(highestY, vertices[index].y);
             var top = new List<Vector2>();
-            for (int index = 0; index < verts.Length; index++)
-                if (verts[index].y > ymax - 0.03f) top.Add(new Vector2(verts[index].x, verts[index].z));
-            if (top.Count < 8) return null;
-            float y = ymax;
+            for (int index = 0; index < vertices.Length; index++)
+                if (vertices[index].y > highestY - RailHeadHeightToleranceInMeters) top.Add(new Vector2(vertices[index].x, vertices[index].z));
+            if (top.Count < MinimumRailHeadPointCount) return null;
+            float railHeadY = highestY;
 
             // straight? principal axis of the rail-head points
             Vector2 mean = Vector2.zero;
-            foreach (var point2D in top) mean += point2D;
+            foreach (var planePoint in top) mean += planePoint;
             mean /= top.Count;
-            float sxx = 0, sxz = 0, szz = 0;
-            foreach (var point2D in top) { var direction2D = point2D - mean; sxx += direction2D.x * direction2D.x; sxz += direction2D.x * direction2D.y; szz += direction2D.y * direction2D.y; }
-            float angle = 0.5f * Mathf.Atan2(2f * sxz, sxx - szz);
+            float covarianceXX = 0, covarianceXZ = 0, covarianceZZ = 0;
+            foreach (var planePoint in top) { var planeDirection = planePoint - mean; covarianceXX += planeDirection.x * planeDirection.x; covarianceXZ += planeDirection.x * planeDirection.y; covarianceZZ += planeDirection.y * planeDirection.y; }
+            float angle = 0.5f * Mathf.Atan2(2f * covarianceXZ, covarianceXX - covarianceZZ);
             var axis = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
             var side = new Vector2(-axis.y, axis.x);
             var lateralOffsets = new List<float>();
-            float amin = float.MaxValue, amax = float.MinValue;
-            foreach (var point2D in top)
+            float axisMinimum = float.MaxValue, axisMaximum = float.MinValue;
+            foreach (var planePoint in top)
             {
-                var direction2D = point2D - mean;
-                lateralOffsets.Add(Vector2.Dot(direction2D, side));
-                float firstValue = Vector2.Dot(direction2D, axis);
-                amin = Mathf.Min(amin, firstValue); amax = Mathf.Max(amax, firstValue);
+                var planeDirection = planePoint - mean;
+                lateralOffsets.Add(Vector2.Dot(planeDirection, side));
+                float axisPosition = Vector2.Dot(planeDirection, axis);
+                axisMinimum = Mathf.Min(axisMinimum, axisPosition); axisMaximum = Mathf.Max(axisMaximum, axisPosition);
             }
-            if (TwoClusters(lateralOffsets, out float l1, out float l2, out float error) && error < 0.003f && Mathf.Abs(l2 - l1) > 1.2f)
+            if (TwoClusters(lateralOffsets, out float firstRailOffset, out float secondRailOffset, out float fitError) && fitError < MaximumStraightFitError && Mathf.Abs(secondRailOffset - firstRailOffset) > MinimumRailSeparationInMeters)
             {
-                var center2D = mean + side * ((l1 + l2) * 0.5f);
-                var p0 = center2D + axis * amin; var p1 = center2D + axis * amax;
-                return new Shape { Pts = new[] { new Vector3(p0.x, y, p0.y), new Vector3(p1.x, y, p1.y) }, Bend = false };
+                var planeCenter = mean + side * ((firstRailOffset + secondRailOffset) * 0.5f);
+                var lineStart = planeCenter + axis * axisMinimum; var lineEnd = planeCenter + axis * axisMaximum;
+                return new Shape { Points = new[] { new Vector3(lineStart.x, railHeadY, lineStart.y), new Vector3(lineEnd.x, railHeadY, lineEnd.y) }, Bend = false };
             }
 
             // bend: centre where the rail heads fall on two circles 1.5 - 1.9 m apart
             Vector2 centre = Vector2.zero;
             float best = float.MaxValue;
             // the centre may lie far from the piece (trestle pieces are placed around it): coarse to fine search
-            float[] radius = { 300f, 12f, 1.2f }, stepOf = { 6f, 0.4f, 0.03f };
             var results = new List<float>(top.Count);
-            for (int pass = 0; pass < 3; pass++)
+            for (int pass = 0; pass < SearchPassCount; pass++)
             {
-                var from = pass == 0 ? mean : centre;
-                float r = radius[pass], step = stepOf[pass];
-                float lowerValue = pass == 0 ? 0.8f : 1.3f, upperValue = pass == 0 ? 3f : 2.1f;
+                var searchOrigin = pass == 0 ? mean : centre;
+                float searchRadius = SearchRadiiInMeters[pass], searchStep = SearchStepsInMeters[pass];
+                float minimumRingGap = pass == 0 ? CoarseMinimumRingGapInMeters : FineMinimumRingGapInMeters, maximumRingGap = pass == 0 ? CoarseMaximumRingGapInMeters : FineMaximumRingGapInMeters;
                 best = float.MaxValue;
-                for (float x = -r; x <= r; x += step)
-                for (float z = -r; z <= r; z += step)
+                for (float offsetX = -searchRadius; offsetX <= searchRadius; offsetX += searchStep)
+                for (float offsetZ = -searchRadius; offsetZ <= searchRadius; offsetZ += searchStep)
                 {
-                    var cc = from + new Vector2(x, z);
+                    var candidateCentre = searchOrigin + new Vector2(offsetX, offsetZ);
                     results.Clear();
-                    foreach (var point2D in top) results.Add((point2D - cc).magnitude);
-                    if (!TwoClusters(results, out float a1, out float a2, out float e2)) continue;
-                    float gain = Mathf.Abs(a2 - a1);
-                    if (gain < lowerValue || gain > upperValue) continue;
-                    if (e2 < best) { best = e2; centre = cc; }
+                    foreach (var planePoint in top) results.Add((planePoint - candidateCentre).magnitude);
+                    if (!TwoClusters(results, out float firstRadius, out float secondRadius, out float candidateError)) continue;
+                    float ringGap = Mathf.Abs(secondRadius - firstRadius);
+                    if (ringGap < minimumRingGap || ringGap > maximumRingGap) continue;
+                    if (candidateError < best) { best = candidateError; centre = candidateCentre; }
                 }
                 if (best == float.MaxValue) return null;
             }
             if (best == float.MaxValue) return null;
             var radii = new List<float>();
-            foreach (var point2D in top) radii.Add((point2D - centre).magnitude);
-            TwoClusters(radii, out float r1, out float r2, out _);
-            float rc = (r1 + r2) * 0.5f;
+            foreach (var planePoint in top) radii.Add((planePoint - centre).magnitude);
+            TwoClusters(radii, out float innerRadius, out float outerRadius, out _);
+            float centerRadius = (innerRadius + outerRadius) * 0.5f;
             // angle range around the mean direction (no wrap-around)
-            var md = (mean - centre).normalized;
-            float baseAng = Mathf.Atan2(md.y, md.x);
-            float tmin = float.MaxValue, tmax = float.MinValue;
-            foreach (var point2D in top)
+            var meanDirection = (mean - centre).normalized;
+            float baseAngle = Mathf.Atan2(meanDirection.y, meanDirection.x);
+            float minimumAngle = float.MaxValue, maximumAngle = float.MinValue;
+            foreach (var planePoint in top)
             {
-                var direction2D = point2D - centre;
-                float fraction = Mathf.DeltaAngle(baseAng * Mathf.Rad2Deg, Mathf.Atan2(direction2D.y, direction2D.x) * Mathf.Rad2Deg) * Mathf.Deg2Rad;
-                tmin = Mathf.Min(tmin, fraction); tmax = Mathf.Max(tmax, fraction);
+                var planeDirection = planePoint - centre;
+                float angleOffset = Mathf.DeltaAngle(baseAngle * Mathf.Rad2Deg, Mathf.Atan2(planeDirection.y, planeDirection.x) * Mathf.Rad2Deg) * Mathf.Deg2Rad;
+                minimumAngle = Mathf.Min(minimumAngle, angleOffset); maximumAngle = Mathf.Max(maximumAngle, angleOffset);
             }
-            float arc = (tmax - tmin) * rc;
-            int count = Mathf.Max(2, Mathf.CeilToInt(arc / 2f) + 1);
+            float arc = (maximumAngle - minimumAngle) * centerRadius;
+            int count = Mathf.Max(2, Mathf.CeilToInt(arc / BendPointSpacingInMeters) + 1);
             var points = new Vector3[count];
             for (int index = 0; index < count; index++)
             {
-                float fraction = baseAng + Mathf.Lerp(tmin, tmax, index / (float)(count - 1));
-                points[index] = new Vector3(centre.x + Mathf.Cos(fraction) * rc, y, centre.y + Mathf.Sin(fraction) * rc);
+                float pointAngle = baseAngle + Mathf.Lerp(minimumAngle, maximumAngle, index / (float)(count - 1));
+                points[index] = new Vector3(centre.x + Mathf.Cos(pointAngle) * centerRadius, railHeadY, centre.y + Mathf.Sin(pointAngle) * centerRadius);
             }
-            return new Shape { Pts = points, Bend = true };
+            return new Shape { Points = points, Bend = true };
         }
 
         /// Splits sorted values at the largest gap; error = mean squared distance to the two cluster means.
-        static bool TwoClusters(List<float> v, out float m1, out float m2, out float error)
+        static bool TwoClusters(List<float> values, out float firstMean, out float secondMean, out float meanSquaredError)
         {
-            m1 = m2 = error = 0f;
-            if (v.Count < 4) return false;
-            var sides = new List<float>(v);
-            sides.Sort();
+            firstMean = secondMean = meanSquaredError = 0f;
+            if (values.Count < MinimumClusterValueCount) return false;
+            var sortedValues = new List<float>(values);
+            sortedValues.Sort();
             int split = 1; float gap = 0f;
-            for (int index = 1; index < sides.Count; index++) if (sides[index] - sides[index - 1] > gap) { gap = sides[index] - sides[index - 1]; split = index; }
-            if (split < 2 || sides.Count - split < 2) return false;
-            for (int index = 0; index < split; index++) m1 += sides[index];
-            for (int index = split; index < sides.Count; index++) m2 += sides[index];
-            m1 /= split; m2 /= sides.Count - split;
-            for (int index = 0; index < split; index++) error += (sides[index] - m1) * (sides[index] - m1);
-            for (int index = split; index < sides.Count; index++) error += (sides[index] - m2) * (sides[index] - m2);
-            error /= sides.Count;
+            for (int index = 1; index < sortedValues.Count; index++) if (sortedValues[index] - sortedValues[index - 1] > gap) { gap = sortedValues[index] - sortedValues[index - 1]; split = index; }
+            if (split < MinimumClusterSize || sortedValues.Count - split < MinimumClusterSize) return false;
+            for (int index = 0; index < split; index++) firstMean += sortedValues[index];
+            for (int index = split; index < sortedValues.Count; index++) secondMean += sortedValues[index];
+            firstMean /= split; secondMean /= sortedValues.Count - split;
+            for (int index = 0; index < split; index++) meanSquaredError += (sortedValues[index] - firstMean) * (sortedValues[index] - firstMean);
+            for (int index = split; index < sortedValues.Count; index++) meanSquaredError += (sortedValues[index] - secondMean) * (sortedValues[index] - secondMean);
+            meanSquaredError /= sortedValues.Count;
             return true;
         }
 
-        static float Length(Vector3[] p)
+        static float Length(Vector3[] points)
         {
-            float l = 0f;
-            for (int index = 1; index < p.Length; index++) l += Vector3.Distance(p[index - 1], p[index]);
-            return l;
+            float totalLength = 0f;
+            for (int index = 1; index < points.Length; index++) totalLength += Vector3.Distance(points[index - 1], points[index]);
+            return totalLength;
         }
 
         // ------------------------------------------------------------------ joining
 
         static bool Same(Piece firstPiece, Piece secondPiece) =>
-            (Vector3.Distance(firstPiece.A, secondPiece.A) < 0.5f && Vector3.Distance(firstPiece.B, secondPiece.B) < 0.5f) ||
-            (Vector3.Distance(firstPiece.A, secondPiece.B) < 0.5f && Vector3.Distance(firstPiece.B, secondPiece.A) < 0.5f);
+            (Vector3.Distance(firstPiece.StartPoint, secondPiece.StartPoint) < SamePieceToleranceInMeters && Vector3.Distance(firstPiece.EndPoint, secondPiece.EndPoint) < SamePieceToleranceInMeters) ||
+            (Vector3.Distance(firstPiece.StartPoint, secondPiece.EndPoint) < SamePieceToleranceInMeters && Vector3.Distance(firstPiece.EndPoint, secondPiece.StartPoint) < SamePieceToleranceInMeters);
 
-        static Vector3 EndPos(List<Piece> pieces, int end) => end % 2 == 0 ? pieces[end / 2].A : pieces[end / 2].B;
-        static Vector3 Outward(List<Piece> pieces, int end) => end % 2 == 0 ? pieces[end / 2].OutA : pieces[end / 2].OutB;
+        static Vector3 EndPosition(List<Piece> pieces, int end) => end % 2 == 0 ? pieces[end / 2].StartPoint : pieces[end / 2].EndPoint;
+        static Vector3 Outward(List<Piece> pieces, int end) => end % 2 == 0 ? pieces[end / 2].StartOutwardDirection : pieces[end / 2].EndOutwardDirection;
 
         /// Can the first end continue into the second? (lower score = better)
         static bool Match(List<Piece> pieces, int firstEnd, int secondEnd, out float score)
         {
             score = 0f;
-            var firstPosition = EndPos(pieces, firstEnd);
-            var secondPosition = EndPos(pieces, secondEnd);
+            var firstPosition = EndPosition(pieces, firstEnd);
+            var secondPosition = EndPosition(pieces, secondEnd);
             var gap = secondPosition - firstPosition;
             gap.y = 0f;
             float distance = gap.magnitude;
-            if (distance > MaxGap) return false;
-            if (Mathf.Abs(secondPosition.y - firstPosition.y) > 3f + 0.1f * distance) return false;   // not a line at another level
+            if (distance > MaximumGapInMeters) return false;
+            if (Mathf.Abs(secondPosition.y - firstPosition.y) > LevelToleranceInMeters + LevelToleranceGrowthPerMeter * distance) return false;   // not a line at another level
             var firstOutward = Outward(pieces, firstEnd);
             var secondOutward = Outward(pieces, secondEnd);
-            if (Vector3.Dot(firstOutward, -secondOutward) < 0.5f) return false;         // the next piece must head on (within ~60°)
+            if (Vector3.Dot(firstOutward, -secondOutward) < MinimumHeadOnDot) return false;         // the next piece must head on (within ~60°)
             float along = Vector3.Dot(gap, firstOutward);
-            if (along < -MaxOverlap) return false;
+            if (along < -MaximumOverlapInMeters) return false;
             // overlapping pieces: how far the second end lies from the first piece's own centreline (a bend's end tangent overshoots)
             float lateral = along < 0f ? DistanceToPiece(pieces[firstEnd / 2], secondPosition) : (gap - firstOutward * along).magnitude;
-            if (lateral > 3f + 1.2f * Mathf.Max(along, 0f)) return false;   // bends drift sideways
-            score = distance + 2f * lateral + (pieces[secondEnd / 2].Bend ? BendPenalty : 0f);
+            if (lateral > LateralToleranceInMeters + LateralToleranceGrowthPerMeter * Mathf.Max(along, 0f)) return false;   // bends drift sideways
+            score = distance + LateralScoreWeight * lateral + (pieces[secondEnd / 2].Bend ? BendPenalty : 0f);
             return true;
         }
 
-        static float DistanceToPiece(Piece piece, Vector3 otherPoint)
+        static float DistanceToPiece(Piece piece, Vector3 queryPoint)
         {
             float best = float.MaxValue;
-            var q2 = new Vector2(otherPoint.x, otherPoint.z);
-            for (int index = 0; index < piece.Pts.Length - 1; index++)
+            var queryPlanePoint = new Vector2(queryPoint.x, queryPoint.z);
+            for (int index = 0; index < piece.WorldPoints.Length - 1; index++)
             {
-                var firstPoint2D = new Vector2(piece.Pts[index].x, piece.Pts[index].z);
-                var segment = new Vector2(piece.Pts[index + 1].x, piece.Pts[index + 1].z) - firstPoint2D;
-                float fraction = Mathf.Clamp01(Vector2.Dot(q2 - firstPoint2D, segment) / Mathf.Max(segment.sqrMagnitude, 1e-6f));
-                best = Mathf.Min(best, (q2 - firstPoint2D - segment * fraction).magnitude);
+                var segmentStart = new Vector2(piece.WorldPoints[index].x, piece.WorldPoints[index].z);
+                var segment = new Vector2(piece.WorldPoints[index + 1].x, piece.WorldPoints[index + 1].z) - segmentStart;
+                float fraction = Mathf.Clamp01(Vector2.Dot(queryPlanePoint - segmentStart, segment) / Mathf.Max(segment.sqrMagnitude, MinimumSegmentLengthSquared));
+                best = Mathf.Min(best, (queryPlanePoint - segmentStart - segment * fraction).magnitude);
             }
             return best;
         }
 
-        static RailLine Build(List<(Piece p, bool reversed)> chain)
+        static RailLine Build(List<(Piece piece, bool reversed)> chain)
         {
             if (chain.Count == 0) return null;
             var rawPoints = new List<Vector3>();
@@ -426,34 +476,34 @@ namespace SteamRailway
                 var nextEntry = nextCenterline[0];
                 var nextDirection = Flat(nextCenterline[1] - nextCenterline[0]);
                 float along = Vector3.Dot(nextEntry - exitPoint, exitDirection);
-                if (along < 1f)
+                if (along < OverlapMarginInMeters)
                 {
                     // overlapping pieces: carry on along the next piece from where this one ends
-                    skipMeters = Mathf.Max(0f, Vector3.Dot(exitPoint - nextEntry, nextDirection)) + 1f;
+                    skipMeters = Mathf.Max(0f, Vector3.Dot(exitPoint - nextEntry, nextDirection)) + OverlapMarginInMeters;
                     continue;
                 }
                 // gap between two pieces: smooth Hermite curve
                 float gapLength = Vector3.Distance(exitPoint, nextEntry);
-                int steps = Mathf.Max(1, Mathf.CeilToInt(gapLength / 6f));
-                for (int deepIndex = 1; deepIndex < steps; deepIndex++) { rawPoints.Add(Hermite(exitPoint, exitDirection * gapLength, nextEntry, nextDirection * gapLength, deepIndex / (float)steps)); pinned.Add(false); }
+                int steps = Mathf.Max(1, Mathf.CeilToInt(gapLength / GapCurveStepInMeters));
+                for (int innerIndex = 1; innerIndex < steps; innerIndex++) { rawPoints.Add(Hermite(exitPoint, exitDirection * gapLength, nextEntry, nextDirection * gapLength, innerIndex / (float)steps)); pinned.Add(false); }
             }
             if (rawPoints.Count < 2) return null;
 
             // Smooth: the pieces' ends do not quite meet (steps of a few cm to tens of cm), which jolts the train
             // and shows as kinks. Resample finely, then Taubin smoothing (no shrinking of the real curves).
-            Resample(rawPoints, pinned, SmoothStep, out var points, out var fixedPt);
-            Taubin(points, fixedPt, SmoothIterations);
+            Resample(rawPoints, pinned, SmoothStepInMeters, out var points, out var pinnedSamples);
+            Taubin(points, pinnedSamples, SmoothIterations);
 
             var line = new RailLine();
             // control points every 2nd sample (4 m), always the ends
-            for (int index = 0; index < points.Count; index += 2) line.Points.Add(points[index]);
-            if ((points.Count - 1) % 2 != 0) line.Points.Add(points[points.Count - 1]);
+            for (int index = 0; index < points.Count; index += ControlPointStride) line.Points.Add(points[index]);
+            if ((points.Count - 1) % ControlPointStride != 0) line.Points.Add(points[points.Count - 1]);
             // the stretches on kept pieces (runs of pinned samples)
             for (int index = 0; index < points.Count; index++)
             {
-                if (!fixedPt[index]) continue;
+                if (!pinnedSamples[index]) continue;
                 int innerIndex = index;
-                while (innerIndex + 1 < points.Count && fixedPt[innerIndex + 1]) innerIndex++;
+                while (innerIndex + 1 < points.Count && pinnedSamples[innerIndex + 1]) innerIndex++;
                 if (innerIndex > index) line.Keep.Add(new KeyValuePair<Vector3, Vector3>(points[index], points[innerIndex]));
                 index = innerIndex;
             }
@@ -461,45 +511,45 @@ namespace SteamRailway
             return line;
         }
 
-        const float SmoothStep = 2f;
+        const float SmoothStepInMeters = 2f;
         const int SmoothIterations = 40;
 
-        static void Resample(List<Vector3> src, List<bool> pin, float step, out List<Vector3> dst, out List<bool> fixedPt)
+        static void Resample(List<Vector3> sourcePoints, List<bool> pinFlags, float step, out List<Vector3> resampledPoints, out List<bool> pinnedSamples)
         {
-            dst = new List<Vector3>();
-            fixedPt = new List<bool>();
-            dst.Add(src[0]); fixedPt.Add(true);                      // the line's ends stay where they are
+            resampledPoints = new List<Vector3>();
+            pinnedSamples = new List<bool>();
+            resampledPoints.Add(sourcePoints[0]); pinnedSamples.Add(true);                      // the line's ends stay where they are
             float carry = 0f;
-            for (int index = 0; index < src.Count - 1; index++)
+            for (int index = 0; index < sourcePoints.Count - 1; index++)
             {
-                var start = src[index]; var end = src[index + 1];
+                var start = sourcePoints[index]; var end = sourcePoints[index + 1];
                 float segmentLength = Vector3.Distance(start, end);
                 float fraction = step - carry;
                 while (fraction <= segmentLength)
                 {
-                    dst.Add(Vector3.Lerp(start, end, fraction / segmentLength));
-                    fixedPt.Add(pin[index] && pin[index + 1]);
+                    resampledPoints.Add(Vector3.Lerp(start, end, fraction / segmentLength));
+                    pinnedSamples.Add(pinFlags[index] && pinFlags[index + 1]);
                     fraction += step;
                 }
                 carry = segmentLength - (fraction - step);
             }
-            if (Vector3.Distance(dst[dst.Count - 1], src[src.Count - 1]) > 0.5f) { dst.Add(src[src.Count - 1]); fixedPt.Add(true); }
-            else { dst[dst.Count - 1] = src[src.Count - 1]; fixedPt[fixedPt.Count - 1] = true; }
+            if (Vector3.Distance(resampledPoints[resampledPoints.Count - 1], sourcePoints[sourcePoints.Count - 1]) > ResampleEndToleranceInMeters) { resampledPoints.Add(sourcePoints[sourcePoints.Count - 1]); pinnedSamples.Add(true); }
+            else { resampledPoints[resampledPoints.Count - 1] = sourcePoints[sourcePoints.Count - 1]; pinnedSamples[pinnedSamples.Count - 1] = true; }
         }
 
         /// Taubin smoothing (shrink, then inflate): removes the small steps and kinks, keeps the shape of the bends.
-        static void Taubin(List<Vector3> points, List<bool> fixedPt, int iterations)
+        static void Taubin(List<Vector3> points, List<bool> pinnedSamples, int iterations)
         {
             var buffer = new Vector3[points.Count];
-            for (int item = 0; item < iterations; item++)
+            for (int iteration = 0; iteration < iterations; iteration++)
             {
                 for (int pass = 0; pass < 2; pass++)
                 {
-                    float factor = pass == 0 ? 0.5f : -0.53f;
+                    float smoothingFactor = pass == 0 ? TaubinShrinkFactor : TaubinInflateFactor;
                     for (int index = 0; index < points.Count; index++)
                     {
-                        if (index == 0 || index == points.Count - 1 || fixedPt[index]) { buffer[index] = points[index]; continue; }
-                        buffer[index] = points[index] + factor * ((points[index - 1] + points[index + 1]) * 0.5f - points[index]);
+                        if (index == 0 || index == points.Count - 1 || pinnedSamples[index]) { buffer[index] = points[index]; continue; }
+                        buffer[index] = points[index] + smoothingFactor * ((points[index - 1] + points[index + 1]) * 0.5f - points[index]);
                     }
                     for (int index = 0; index < points.Count; index++) points[index] = buffer[index];
                 }
@@ -508,11 +558,14 @@ namespace SteamRailway
 
         /// Hides the original pieces the line's new rail replaces (their rails no longer meet the smoothed line).
         /// Pieces the game draws itself (no renderers) are switched off.
-        public static void HideReplaced(RailLine line)
+        public static void HideReplaced(RailLine line, ObstacleData onlyWithin = null)
         {
             foreach (var transform in line.Replaced)
             {
                 if (transform == null) continue;
+                if (onlyWithin != null && !Obstacles.Contains(onlyWithin, transform.position.x, transform.position.z)) continue;
+                // hard mode: the original pieces at an unrepaired broken bridge stay as the region has them
+                if (Obstacles.IsInUnrepairedBridge(transform.position.x, transform.position.z)) continue;
                 bool any = false;
                 foreach (var renderer in transform.GetComponentsInChildren<Renderer>(true)) { renderer.enabled = false; any = true; }
                 var lodGroup = transform.GetComponent<LODGroup>();
@@ -531,9 +584,9 @@ namespace SteamRailway
         public const int LineVersion = 2;
         static readonly System.Text.Json.JsonSerializerOptions s_Json = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
         static string LinePath(string scene) => System.IO.Path.Combine(RouteStore.FolderPath, "Lines", scene + ".json");
-        static PieceRef Ref(Transform transform, bool keep) => new PieceRef { Name = transform.name, Pos = V(transform.position), Keep = keep };
-        static float[] V(Vector3 vector) => new[] { (float)System.Math.Round(vector.x, 3), (float)System.Math.Round(vector.y, 3), (float)System.Math.Round(vector.z, 3) };
-        static Vector3 V(float[] a, int o = 0) => new Vector3(a[o], a[o + 1], a[o + 2]);
+        static PieceRef ToPieceRef(Transform transform, bool keep) => new PieceRef { Name = transform.name, Position = RoundedComponents(transform.position), Keep = keep };
+        static float[] RoundedComponents(Vector3 vector) => new[] { (float)System.Math.Round(vector.x, RoundingDecimalPlaces), (float)System.Math.Round(vector.y, RoundingDecimalPlaces), (float)System.Math.Round(vector.z, RoundingDecimalPlaces) };
+        static Vector3 ToVector3(float[] components, int offset = 0) => new Vector3(components[offset], components[offset + 1], components[offset + 2]);
 
         /// The region's line file as it is on disk (for the track editor), or null.
         public static LineFile ReadLineFile(string scene)
@@ -574,8 +627,8 @@ namespace SteamRailway
                 foreach (var line in lines)
                 {
                     var lineData = new LineData();
-                    foreach (var point in line.Points) lineData.Points.Add(V(point));
-                    foreach (var pair in line.Keep) { var a = V(pair.Key); var b = V(pair.Value); lineData.Keep.Add(new[] { a[0], a[1], a[2], b[0], b[1], b[2] }); }
+                    foreach (var point in line.Points) lineData.Points.Add(RoundedComponents(point));
+                    foreach (var pair in line.Keep) { var keepStart = RoundedComponents(pair.Key); var keepEnd = RoundedComponents(pair.Value); lineData.Keep.Add(new[] { keepStart[0], keepStart[1], keepStart[2], keepEnd[0], keepEnd[1], keepEnd[2] }); }
                     lineData.Pieces.AddRange(line.Used);
                     lineFile.Lines.Add(lineData);
                 }
@@ -584,7 +637,7 @@ namespace SteamRailway
                 System.IO.File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(lineFile, s_Json));
                 SteamRailwayMod.Debug($"Lines of {scene} written to {path}.");
             }
-            catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Writing the lines of {scene} failed: {e.Message}"); }
+            catch (System.Exception exception) { SteamRailwayMod.Log.Warning($"Writing the lines of {scene} failed: {exception.Message}"); }
         }
 
         /// The region's saved lines, or null (none yet, or written by an older line finder and not locked).
@@ -594,7 +647,7 @@ namespace SteamRailway
             if (!System.IO.File.Exists(path)) return null;
             LineFile lineFile;
             try { lineFile = System.Text.Json.JsonSerializer.Deserialize<LineFile>(System.IO.File.ReadAllText(path), s_Json); }
-            catch (System.Exception e) { SteamRailwayMod.Log.Warning($"{path} could not be read ({e.Message}); the lines are found again."); return null; }
+            catch (System.Exception exception) { SteamRailwayMod.Log.Warning($"{path} could not be read ({exception.Message}); the lines are found again."); return null; }
             if (lineFile == null || lineFile.Lines == null || lineFile.Lines.Count == 0) return null;
             if (!lineFile.Locked && lineFile.Version != LineVersion) return null;
 
@@ -613,15 +666,15 @@ namespace SteamRailway
             {
                 if (lineData.Points == null || lineData.Points.Count < 2) continue;
                 var line = new RailLine();
-                foreach (var p in lineData.Points) line.Points.Add(V(p));
-                if (lineData.Keep != null) foreach (var k in lineData.Keep) line.Keep.Add(new KeyValuePair<Vector3, Vector3>(V(k, 0), V(k, 3)));
+                foreach (var savedPoint in lineData.Points) line.Points.Add(ToVector3(savedPoint));
+                if (lineData.Keep != null) foreach (var savedKeep in lineData.Keep) line.Keep.Add(new KeyValuePair<Vector3, Vector3>(ToVector3(savedKeep, 0), ToVector3(savedKeep, KeepEndOffset)));
                 if (lineData.Pieces != null)
                     foreach (var pieceRef in lineData.Pieces)
                     {
                         line.Used.Add(pieceRef);
                         Transform found = null;
-                        if (pieceRef.Name != null && pieceRef.Pos != null && byName.TryGetValue(pieceRef.Name, out var cands))
-                            foreach (var child in cands) if ((child.position - V(pieceRef.Pos)).sqrMagnitude < 0.01f) { found = child; break; }
+                        if (pieceRef.Name != null && pieceRef.Position != null && byName.TryGetValue(pieceRef.Name, out var candidates))
+                            foreach (var child in candidates) if ((child.position - ToVector3(pieceRef.Position)).sqrMagnitude < PieceMatchToleranceInSquareMeters) { found = child; break; }
                         if (found == null) { missing++; continue; }
                         s_UsedPieces.Add(found.GetInstanceID());
                         if (!pieceRef.Keep) line.Replaced.Add(found);
@@ -635,41 +688,39 @@ namespace SteamRailway
 
         static Vector3[] Oriented(Piece piece, bool reversed)
         {
-            if (!reversed) return piece.Pts;
-            var result = (Vector3[])piece.Pts.Clone();
+            if (!reversed) return piece.WorldPoints;
+            var result = (Vector3[])piece.WorldPoints.Clone();
             System.Array.Reverse(result);
             return result;
         }
 
         /// Adds a piece's centreline (resampled to at most PointSpacing), skipping its first `skip` metres.
-        static void AddPolyline(List<Vector3> points, List<bool> pin, Vector3[] cl, float skip, bool pinned)
+        static void AddPolyline(List<Vector3> points, List<bool> pinFlags, Vector3[] centerline, float skipInMeters, bool pinned)
         {
-            float distance = 0f, next = skip;
-            for (int index = 0; index < cl.Length - 1; index++)
+            float distance = 0f, nextSampleDistance = skipInMeters;
+            for (int index = 0; index < centerline.Length - 1; index++)
             {
-                var start = cl[index]; var secondPoint = cl[index + 1];
+                var start = centerline[index]; var secondPoint = centerline[index + 1];
                 float segmentLength = Vector3.Distance(start, secondPoint);
-                while (next <= distance + segmentLength)
+                while (nextSampleDistance <= distance + segmentLength)
                 {
-                    var point = Vector3.Lerp(start, secondPoint, segmentLength > 1e-4f ? (next - distance) / segmentLength : 0f);
-                    if (points.Count == 0 || Vector3.Distance(points[points.Count - 1], point) > 1f) { points.Add(point); pin.Add(pinned); }
-                    next += PointSpacing;
+                    var point = Vector3.Lerp(start, secondPoint, segmentLength > MinimumSegmentLengthInMeters ? (nextSampleDistance - distance) / segmentLength : 0f);
+                    if (points.Count == 0 || Vector3.Distance(points[points.Count - 1], point) > MinimumPointSpacingInMeters) { points.Add(point); pinFlags.Add(pinned); }
+                    nextSampleDistance += PointSpacingInMeters;
                 }
                 distance += segmentLength;
             }
-            var end = cl[cl.Length - 1];
-            if (distance > skip && (points.Count == 0 || Vector3.Distance(points[points.Count - 1], end) > 1f)) { points.Add(end); pin.Add(pinned); }
+            var end = centerline[centerline.Length - 1];
+            if (distance > skipInMeters && (points.Count == 0 || Vector3.Distance(points[points.Count - 1], end) > MinimumPointSpacingInMeters)) { points.Add(end); pinFlags.Add(pinned); }
         }
 
-        static Vector3 Hermite(Vector3 startPoint, Vector3 m0, Vector3 endPoint, Vector3 m1, float fraction)
+        static Vector3 Hermite(Vector3 startPoint, Vector3 startTangent, Vector3 endPoint, Vector3 endTangent, float fraction)
         {
-            float t2 = fraction * fraction, t3 = t2 * fraction;
-            return (2f * t3 - 3f * t2 + 1f) * startPoint + (t3 - 2f * t2 + fraction) * m0 + (-2f * t3 + 3f * t2) * endPoint + (t3 - t2) * m1;
+            float fractionSquared = fraction * fraction, fractionCubed = fractionSquared * fraction;
+            return (2f * fractionCubed - 3f * fractionSquared + 1f) * startPoint + (fractionCubed - 2f * fractionSquared + fraction) * startTangent + (-2f * fractionCubed + 3f * fractionSquared) * endPoint + (fractionCubed - fractionSquared) * endTangent;
         }
 
-        /// Clears the line for the new rail: original track pieces the line does not run on (broken scenery rails,
-        /// stray bends) and small fallen rocks are hidden where they lie on the track. Only the loaded region in
-        /// memory changes. Pieces the line runs on, bridges and big rock faces stay.
+        /// The region's rail pieces found by BeginClear and shared by the lines of one build.
         static List<Transform> s_PieceCache;
 
         /// The region's rail pieces, searched once for all the lines of a build (the scene search is slow).
@@ -679,13 +730,15 @@ namespace SteamRailway
             foreach (var transform in Resources.FindObjectsOfTypeAll<Transform>())
             {
                 if (transform.gameObject.scene.name == null) continue;
-                string n = transform.name;
-                if (n.StartsWith("OBJ_RailTrack") && n.Contains("Prefab") && !n.Contains("Group")) s_PieceCache.Add(transform);
+                string objectName = transform.name;
+                if (objectName.StartsWith("OBJ_RailTrack") && objectName.Contains("Prefab") && !objectName.Contains("Group")) s_PieceCache.Add(transform);
             }
         }
 
         public static void EndClear() => s_PieceCache = null;
 
+        /// Hides stray original pieces and small rocks lying on the track; pieces the line runs on, bridges and
+        /// big rock faces stay. Only the loaded region in memory changes.
         public static void ClearLine(BuiltTrack track)
         {
             int hidden = 0, rocks = 0;
@@ -695,51 +748,175 @@ namespace SteamRailway
                 if (transform == null || !transform.gameObject.activeInHierarchy) continue;
                 {
                     if (s_UsedPieces.Contains(transform.GetInstanceID())) continue;
-                    if (!OnTrack(track, transform, 2.5f, 1.5f)) continue;
+                    if (!OnTrack(track, transform, StrayPieceReachInMeters, StrayPieceBelowInMeters)) continue;
                     Hide(transform, false);
                     hidden++;
                 }
             }
             rocks = ClearObstacles(track);
             if (hidden + rocks > 0)
-                SteamRailwayMod.Debug($"Line {track.Id}: hid {hidden} stray rail piece(s) and {rocks} rock(s) lying on the track.");
+                SteamRailwayMod.Debug($"Line {track.Identifier}: hid {hidden} stray rail piece(s) and {rocks} rock(s) lying on the track.");
         }
 
         static bool IsLooseRock(string name) =>
             name.StartsWith("TRN_Rock") || name.StartsWith("OBJ_Rock") || name.StartsWith("TRN_Boulder") || name.Contains("Rubble");
 
-        /// Rocks and fallen trunks the train would run into: physics boxes the size of the engine are slid along
-        /// the track, and the rock or log objects they really touch are hidden (renderers and colliders). Rock
-        /// faces and cliffs (bigger than 25 m) are never touched.
-        static int ClearObstacles(BuiltTrack track)
+        /// Hides the rocks and fallen trunks that engine-sized boxes slid along the track touch; rock faces and
+        /// cliffs bigger than 25 m are never touched.
+        static int ClearObstacles(BuiltTrack track) => ClearObstacles(track, null);
+
+        /// A rock reaching into the line from just outside the circle is still found (the search boxes stand on the line).
+        const float ObstacleSearchMarginInMeters = 5f;
+
+        /// An obstacle was cleared: the rocks and logs on this line inside its circle are hidden now.
+        public static void ClearObstaclesWithin(BuiltTrack track, ObstacleData obstacle)
+        {
+            int rocks = ClearObstacles(track, obstacle);
+            if (rocks > 0) SteamRailwayMod.Debug($"Line {track.Identifier}: hid {rocks} rock(s) inside {obstacle.Identifier}.");
+        }
+
+        /// `within` limits the search to the part of the line inside that obstacle's circle (null: the whole line).
+        static int ClearObstacles(BuiltTrack track, ObstacleData within)
+        {
+            var found = new List<Transform>();
+            FindLineObstacles(track, within, found);
+            int count = 0;
+            foreach (var root in found)
+            {
+                // hard mode: rocks and logs on the line stay until their obstacle is cleared (or a train knocks the tree away)
+                if (Obstacles.IsHeldBackObject(root.name, ObjectEdits.OriginalPosition(root))) continue;
+                if (!IsClearable(root)) continue;
+                Hide(root, true);
+                count++;
+            }
+            return count;
+        }
+
+        /// The rocks and logs on this line inside the obstacle's circle that wait for it: clearing the obstacle hides them.
+        public static void CollectHeldWithin(BuiltTrack track, ObstacleData obstacle, List<Transform> result)
+        {
+            var found = new List<Transform>();
+            FindLineObstacles(track, obstacle, found);
+            foreach (var root in found)
+                if (Obstacles.IsHeldBackObject(root.name, ObjectEdits.OriginalPosition(root)) && IsClearable(root)) result.Add(root);
+        }
+
+        /// Where the rocks and logs that still wait for the obstacle lie on this line: for each, the stretch of the line
+        /// (spline metres, from, to) its search boxes touched. A train stops at the first of them on its way.
+        public static void BlockingStretches(BuiltTrack track, ObstacleData obstacle, List<Vector2> stretches)
+        {
+            var found = new List<Transform>();
+            var arcs = new List<Vector2>();
+            FindLineObstacles(track, obstacle, found, arcs);
+            float splinePerPath = track.Spline.Length / Mathf.Max(MinimumPathLengthInMeters, track.Path.Length);
+            for (int index = 0; index < found.Count; index++)
+                if (Obstacles.IsHeldBackObject(found[index].name, ObjectEdits.OriginalPosition(found[index])) && IsClearable(found[index]))
+                    stretches.Add(arcs[index] * splinePerPath);
+        }
+
+        /// Rock and log prefabs a train-sized box slid along the line touches (each once). `arcs`, when given, gets for each
+        /// the stretch of the line (path metres) its boxes touched.
+        static void FindLineObstacles(BuiltTrack track, ObstacleData within, List<Transform> found, List<Vector2> arcs = null)
         {
             var path = track.Path;
-            var roots = new HashSet<int>();
-            var found = new List<Transform>();
-            for (float arcLength = 0f; arcLength < path.Length; arcLength += 1.5f)
+            var roots = new Dictionary<int, int>();
+            var center = within != null ? Obstacles.CenterOf(within) : Vector3.zero;
+            float reach = within != null ? within.Radius + ObstacleSearchMarginInMeters : 0f;
+            for (float arcLength = 0f; arcLength < path.Length; arcLength += ObstacleProbeStepInMeters)
             {
-                path.Sample(arcLength, out var point, out var t);
-                var rotation = Quaternion.LookRotation(new Vector3(t.x, 0f, t.z).sqrMagnitude > 1e-6f ? new Vector3(t.x, 0f, t.z) : Vector3.forward, Vector3.up);
-                var hits = Physics.OverlapBox(point + Vector3.up * 2.1f, new Vector3(1.35f, 1.95f, 0.8f), rotation);
+                path.Sample(arcLength, out var point, out var tangent);
+                if (within != null && (point.x - center.x) * (point.x - center.x) + (point.z - center.z) * (point.z - center.z) > reach * reach) continue;
+                var rotation = Quaternion.LookRotation(new Vector3(tangent.x, 0f, tangent.z).sqrMagnitude > MinimumSegmentLengthSquared ? new Vector3(tangent.x, 0f, tangent.z) : Vector3.forward, Vector3.up);
+                var hits = Physics.OverlapBox(point + Vector3.up * ProbeBoxCenterHeightInMeters, new Vector3(ProbeBoxHalfWidthInMeters, ProbeBoxHalfHeightInMeters, ProbeBoxHalfLengthInMeters), rotation);
                 for (int index = 0; index < hits.Length; index++)
                 {
                     var collider = hits[index];
                     if (collider == null || collider.isTrigger) continue;
                     var root = ObstacleRoot(collider.transform);
-                    if (root == null || !roots.Add(root.GetInstanceID())) continue;
+                    if (root == null) continue;
+                    int identifier = root.GetInstanceID();
+                    if (roots.TryGetValue(identifier, out int position))
+                    {
+                        if (arcs != null) arcs[position] = new Vector2(Mathf.Min(arcs[position].x, arcLength), Mathf.Max(arcs[position].y, arcLength));
+                        continue;
+                    }
+                    roots[identifier] = found.Count;
                     found.Add(root);
+                    if (arcs != null) arcs.Add(new Vector2(arcLength, arcLength));
                 }
             }
-            int count = 0;
-            foreach (var root in found)
+        }
+
+        /// Rock faces and cliffs (bigger than 25 m) are never touched; fallen logs always may be.
+        static bool IsClearable(Transform root)
+        {
+            if (IsFallenTree(root.name)) return true;
+            var bounds = TotalBounds(root);
+            return !(bounds.size.x > MaximumClearableWidthInMeters || bounds.size.z > MaximumClearableWidthInMeters || bounds.size.y > MaximumClearableHeightInMeters);
+        }
+
+        /// Where a marked fallen tree lies across this line: the stretch (spline metres, from, to) where a train-sized box slid
+        /// along the line touches one of the tree's colliders. False when it does not touch the line at all.
+        public static bool TreeStretch(BuiltTrack track, IReadOnlyList<Transform> treeObjects, out Vector2 stretch)
+        {
+            stretch = default;
+            if (treeObjects.Count == 0) return false;
+            bool any = false;
+            var bounds = new Bounds(treeObjects[0].position, Vector3.zero);
+            foreach (var treeObject in treeObjects)
+                foreach (var collider in treeObject.GetComponentsInChildren<Collider>(false))
+                {
+                    if (!collider.enabled || collider.isTrigger) continue;
+                    if (!any) { bounds = collider.bounds; any = true; } else bounds.Encapsulate(collider.bounds);
+                }
+            if (!any) return false;
+            bounds.Expand(TreeSearchMarginInMeters * 2f);
+            var path = track.Path;
+            float firstArc = float.MaxValue, lastArc = float.MinValue;
+            for (float arcLength = 0f; arcLength < path.Length; arcLength += 1f)
             {
-                var bounds = TotalBounds(root);
-                bool log = IsFallenTree(root.name);
-                if (!log && (bounds.size.x > 25f || bounds.size.z > 25f || bounds.size.y > 20f)) continue;
-                Hide(root, true);
-                count++;
+                path.Sample(arcLength, out var point, out var tangent);
+                if (point.x < bounds.min.x || point.x > bounds.max.x || point.z < bounds.min.z || point.z > bounds.max.z) continue;
+                var rotation = Quaternion.LookRotation(new Vector3(tangent.x, 0f, tangent.z).sqrMagnitude > MinimumSegmentLengthSquared ? new Vector3(tangent.x, 0f, tangent.z) : Vector3.forward, Vector3.up);
+                var hits = Physics.OverlapBox(point + Vector3.up * ProbeBoxCenterHeightInMeters, new Vector3(ProbeBoxHalfWidthInMeters, ProbeBoxHalfHeightInMeters, ProbeBoxHalfLengthInMeters), rotation);
+                for (int index = 0; index < hits.Length; index++)
+                {
+                    var hitCollider = hits[index];
+                    if (hitCollider == null || hitCollider.isTrigger) continue;
+                    bool ofTree = false;
+                    foreach (var treeObject in treeObjects) if (hitCollider.transform.IsChildOf(treeObject)) { ofTree = true; break; }
+                    if (!ofTree) continue;
+                    firstArc = Mathf.Min(firstArc, arcLength);
+                    lastArc = Mathf.Max(lastArc, arcLength);
+                    break;
+                }
             }
-            return count;
+            if (firstArc > lastArc) return false;
+            float splinePerPath = track.Spline.Length / Mathf.Max(MinimumPathLengthInMeters, path.Length);
+            stretch = new Vector2(firstArc, lastArc) * splinePerPath;
+            return true;
+        }
+
+        const float TreeSearchMarginInMeters = 3f;
+
+        /// Hides the one object of this name and original position (a fallen tree a train has run into).
+        public static void HideObject(string name, float[] position)
+        {
+            if (position == null || position.Length < Vector3ComponentCount) return;
+            var point = new Vector3(position[0], position[1], position[2]);
+            // normally known since the region was built; the whole-scene search below is the fallback
+            var known = new List<Transform>();
+            if (ObjectEdits.TryGetMarkedTreeObjects(name, position, known))
+            {
+                foreach (var transform in known) Hide(transform, true);
+                return;
+            }
+            foreach (var transform in Resources.FindObjectsOfTypeAll<Transform>())
+            {
+                if (transform.name != name || transform.gameObject.scene.name == null) continue;
+                if (Vector3.Distance(ObjectEdits.OriginalPosition(transform), point) > MarkedTreeMatchDistanceInMeters) continue;
+                Hide(transform, true);
+            }
         }
 
         /// The rock or log prefab a collider belongs to (null if it is something else).
@@ -747,9 +924,9 @@ namespace SteamRailway
         {
             for (var node = transform; node != null; node = node.parent)
             {
-                string n = node.name;
-                if (n.Contains("Prefab") && (IsLooseRock(n) || IsFallenTree(n))) return node;
-                if (n.StartsWith("SteamRailway") || n.StartsWith("Terrain")) return null;
+                string objectName = node.name;
+                if (objectName.Contains("Prefab") && (IsLooseRock(objectName) || IsFallenTree(objectName))) return node;
+                if (objectName.StartsWith("SteamRailway") || objectName.StartsWith("Terrain")) return null;
             }
             return null;
         }
@@ -757,42 +934,42 @@ namespace SteamRailway
         static Bounds TotalBounds(Transform root)
         {
             bool any = false;
-            var otherBounds = new Bounds(root.position, Vector3.zero);
+            var combinedBounds = new Bounds(root.position, Vector3.zero);
             foreach (var renderer in root.GetComponentsInChildren<Renderer>(false))
             {
-                if (!any) { otherBounds = renderer.bounds; any = true; }
-                else otherBounds.Encapsulate(renderer.bounds);
+                if (!any) { combinedBounds = renderer.bounds; any = true; }
+                else combinedBounds.Encapsulate(renderer.bounds);
             }
-            return otherBounds;
+            return combinedBounds;
         }
 
         /// Fallen trunks and logs lying in the ravine (standing trees are not touched: they are tall).
         static bool IsFallenTree(string name) =>
-            (name.Contains("Fallen") || name.Contains("TreeLog") || name.Contains("Deadfall") || name.StartsWith("TRN_Log") || name.StartsWith("OBJ_Log"))
+            (name.Contains("Fallen") || name.Contains("Felled") || name.Contains("TreeLog") || name.Contains("Deadfall") || name.StartsWith("TRN_Log") || name.StartsWith("OBJ_Log"))
             && !name.Contains("RailCar");
 
         /// Does any renderer of t reach into the track corridor (within `reach` m of the rail centre, from just
         /// below the rails up to the train's height)? Objects bigger than maxSize (cliffs) never count.
-        static bool OnTrack(BuiltTrack track, Transform transform, float reach, float below, float maxSize = 18f)
+        static bool OnTrack(BuiltTrack track, Transform transform, float reach, float below, float maxSize = DefaultMaximumObjectSizeInMeters)
         {
             var path = track.Path;
             foreach (var renderer in transform.GetComponentsInChildren<Renderer>(false))
             {
                 if (!renderer.enabled) continue;
-                var otherBounds = renderer.bounds;
-                if (otherBounds.size.x > maxSize || otherBounds.size.z > maxSize || otherBounds.size.y > 12f) return false;
+                var rendererBounds = renderer.bounds;
+                if (rendererBounds.size.x > maxSize || rendererBounds.size.z > maxSize || rendererBounds.size.y > MaximumObjectHeightInMeters) return false;
                 // the corridor along the object's whole length (a fallen trunk may cross the track anywhere)
-                int steps = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(otherBounds.size.x, otherBounds.size.z) / 2f), 1, 24);
-                var a0 = new Vector3(otherBounds.min.x, otherBounds.center.y, otherBounds.min.z);
-                var a1 = new Vector3(otherBounds.max.x, otherBounds.center.y, otherBounds.max.z);
+                int steps = Mathf.Clamp(Mathf.CeilToInt(Mathf.Max(rendererBounds.size.x, rendererBounds.size.z) / CorridorSampleSpacingInMeters), 1, MaximumCorridorSamples);
+                var boundsStartCorner = new Vector3(rendererBounds.min.x, rendererBounds.center.y, rendererBounds.min.z);
+                var boundsEndCorner = new Vector3(rendererBounds.max.x, rendererBounds.center.y, rendererBounds.max.z);
                 for (int index = 0; index <= steps; index++)
                 {
-                    var otherPoint = Vector3.Lerp(a0, a1, index / (float)steps);
-                    float arcLength = path.NearestDistance(otherPoint, out float distance);
-                    if (distance > reach + Mathf.Min(otherBounds.extents.x, otherBounds.extents.z) + 2f) continue;
+                    var samplePoint = Vector3.Lerp(boundsStartCorner, boundsEndCorner, index / (float)steps);
+                    float arcLength = path.NearestDistance(samplePoint, out float distance);
+                    if (distance > reach + Mathf.Min(rendererBounds.extents.x, rendererBounds.extents.z) + CorridorMarginInMeters) continue;
                     path.Sample(arcLength, out var point, out _);
-                    if (otherBounds.max.y < point.y - 0.25f - below || otherBounds.min.y > point.y + 4.5f) continue;
-                    var closest = otherBounds.ClosestPoint(point);
+                    if (rendererBounds.max.y < point.y - CorridorBelowRailInMeters - below || rendererBounds.min.y > point.y + CorridorHeightAboveRailInMeters) continue;
+                    var closest = rendererBounds.ClosestPoint(point);
                     var directionDelta = closest - point; directionDelta.y = 0f;
                     if (directionDelta.magnitude <= reach) return true;
                 }

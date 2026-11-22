@@ -4,13 +4,17 @@ using UnityEngine;
 
 namespace SteamRailway
 {
-    /// While a menu is open in the cab (feeding the firebox) or an item is being moved, the game stops carrying the
-    /// player with the train and the view slides towards the back of a moving train. In those moments the player is
-    /// kept at the same place relative to the cab.
+    /// While a cab menu is open or an item is being moved, the game stops carrying the player with the train.
+    /// In those moments the player is kept at the same place relative to the cab.
     internal static class CabCarry
     {
+        const float MinimumCorrectionSquaredDistance = 0.0001f;
+        const float MaximumCorrectionSquaredDistance = 25f;
+
         static Vector3 s_LocalPosition;
         static bool s_HasPosition;
+        static GameObject s_ControllerOwner;
+        static CharacterController s_Controller;
 
         public static void Update(SteamTrain train)
         {
@@ -29,9 +33,13 @@ namespace SteamRailway
 
             Vector3 target = trainTransform.TransformPoint(s_LocalPosition);
             Vector3 offset = target - player.transform.position;
-            if (offset.sqrMagnitude < 0.0001f || offset.sqrMagnitude > 25f) return;
-            var controller = player.GetComponent<CharacterController>();
-            if (controller != null && controller.enabled) controller.Move(offset);
+            if (offset.sqrMagnitude < MinimumCorrectionSquaredDistance || offset.sqrMagnitude > MaximumCorrectionSquaredDistance) return;
+            if (s_ControllerOwner != player)
+            {
+                s_ControllerOwner = player;
+                s_Controller = player.GetComponent<CharacterController>();
+            }
+            if (s_Controller != null && s_Controller.enabled) s_Controller.Move(offset);
             else player.transform.position = target;
         }
 

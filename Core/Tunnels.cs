@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using UnityEngine;
 
 namespace SteamRailway
@@ -8,9 +9,9 @@ namespace SteamRailway
     internal sealed class TunnelData
     {
         public string Source { get; set; }       // the region's tunnel object copied (by name)
-        public float[] SourcePos { get; set; }    // where that object stands (several may share a name)
-        public float[] Pos { get; set; }
-        public float[] Rot { get; set; }
+        [JsonPropertyName("SourcePos")] public float[] SourcePosition { get; set; }    // where that object stands (several may share a name)
+        [JsonPropertyName("Pos")] public float[] Position { get; set; }
+        [JsonPropertyName("Rot")] public float[] Rotation { get; set; }
     }
 
     internal sealed class TunnelFile
@@ -19,12 +20,16 @@ namespace SteamRailway
         public List<TunnelData> Tunnels { get; set; } = new List<TunnelData>();
     }
 
-    /// Tunnel mouths placed with the track editor: copies of a train tunnel the region already has (only the
-    /// loaded region's own models are used), kept in Mods\SteamRailway\Tunnels\<region>.json. The copy's own rails
-    /// are hidden (the line's rails run through it) and a dark screen just inside hides whatever the ground
-    /// leaves in the opening.
+    /// Tunnel mouths placed with the track editor: copies of a tunnel the region has, kept in Mods\SteamRailway\Tunnels\<region>.json.
+    /// The copy's own rails are hidden and a dark screen just inside covers the opening.
     internal static class Tunnels
     {
+        const int QuaternionComponentCount = 4;
+        const int QuaternionLastComponentIndex = 3;
+        const float PlugCenterHeightInMeters = 4f;
+        const float PlugCenterDepthInMeters = 1.5f;
+        const float PlugSizeInMeters = 9f;
+        const float PlugThicknessInMeters = 0.3f;
         const float MouthDepth = 8f;      // m from the tunnel object's origin to the front of its mouth
         static readonly JsonSerializerOptions s_Json = new JsonSerializerOptions { WriteIndented = true };
         static readonly List<GameObject> s_Live = new List<GameObject>();
@@ -42,7 +47,7 @@ namespace SteamRailway
             if (File.Exists(path))
             {
                 try { s_File = JsonSerializer.Deserialize<TunnelFile>(File.ReadAllText(path), s_Json) ?? new TunnelFile(); }
-                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"{path} could not be read: {e.Message}"); }
+                catch (System.Exception exception) { SteamRailwayMod.Log.Warning($"{path} could not be read: {exception.Message}"); }
             }
             if (s_File.Tunnels == null) s_File.Tunnels = new List<TunnelData>();
             return s_File;
@@ -57,7 +62,7 @@ namespace SteamRailway
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 File.WriteAllText(path, JsonSerializer.Serialize(s_File, s_Json));
             }
-            catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Writing the tunnels failed: {e.Message}"); }
+            catch (System.Exception exception) { SteamRailwayMod.Log.Warning($"Writing the tunnels failed: {exception.Message}"); }
         }
 
         /// The region's tunnels (again after a rebuild).
@@ -69,8 +74,9 @@ namespace SteamRailway
             int made = 0;
             foreach (var tunnel in tunnelFile.Tunnels)
             {
+                if (Obstacles.IsHeldBack(tunnel.Position)) continue;
                 try { if (Spawn(tunnel) != null) made++; }
-                catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Tunnel {tunnel.Source}: {e.Message}"); }
+                catch (System.Exception exception) { SteamRailwayMod.Log.Warning($"Tunnel {tunnel.Source}: {exception.Message}"); }
             }
             if (tunnelFile.Tunnels.Count > 0) SteamRailwayMod.Log.Msg($"{scene}: {made} of {tunnelFile.Tunnels.Count} tunnel(s) placed.");
         }
@@ -94,11 +100,11 @@ namespace SteamRailway
         static Transform FindSource(TunnelData tunnel)
         {
             Transform best = null; float bestDistance = float.MaxValue;
-            var want = CustomLines.V(tunnel.SourcePos);
+            var want = CustomLines.ToVector3(tunnel.SourcePosition);
             foreach (var transform in Resources.FindObjectsOfTypeAll<Transform>())
             {
                 if (transform.gameObject.scene.name == null || transform.name != tunnel.Source) continue;
-                float deltaDistance = tunnel.SourcePos != null ? (transform.position - want).sqrMagnitude : 0f;
+                float deltaDistance = tunnel.SourcePosition != null ? (transform.position - want).sqrMagnitude : 0f;
                 if (deltaDistance < bestDistance) { bestDistance = deltaDistance; best = transform; }
             }
             return best;
@@ -112,7 +118,7 @@ namespace SteamRailway
             if (source == null) { SteamRailwayMod.Log.Warning($"Tunnel model {tunnel.Source} is not in this region."); return null; }
             var targetObject = Object.Instantiate(source.gameObject);
             targetObject.name = "SR_Tunnel_" + tunnel.Source;
-            targetObject.transform.SetPositionAndRotation(CustomLines.V(tunnel.Pos), tunnel.Rot != null && tunnel.Rot.Length >= 4 ? new Quaternion(tunnel.Rot[0], tunnel.Rot[1], tunnel.Rot[2], tunnel.Rot[3]) : Quaternion.identity);
+            targetObject.transform.SetPositionAndRotation(CustomLines.ToVector3(tunnel.Position), tunnel.Rotation != null && tunnel.Rotation.Length >= QuaternionComponentCount ? new Quaternion(tunnel.Rotation[0], tunnel.Rotation[1], tunnel.Rotation[2], tunnel.Rotation[QuaternionLastComponentIndex]) : Quaternion.identity);
             // the line's own rails run through it; no region transitions copied along
             foreach (var child in targetObject.GetComponentsInChildren<Transform>(true))
                 if (child.name.StartsWith("OBJ_RailTrack")) child.gameObject.SetActive(false);
@@ -124,8 +130,8 @@ namespace SteamRailway
             var collider = plug.GetComponent<Collider>();
             if (collider != null) Object.Destroy(collider);
             plug.transform.SetParent(targetObject.transform, false);
-            plug.transform.localPosition = new Vector3(0f, 4f, 1.5f);
-            plug.transform.localScale = new Vector3(9f, 9f, 0.3f);
+            plug.transform.localPosition = new Vector3(0f, PlugCenterHeightInMeters, PlugCenterDepthInMeters);
+            plug.transform.localScale = new Vector3(PlugSizeInMeters, PlugSizeInMeters, PlugThicknessInMeters);
             var meshRenderer = plug.GetComponent<MeshRenderer>();
             if (s_Dark != null) meshRenderer.sharedMaterial = s_Dark;
             meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
@@ -137,7 +143,7 @@ namespace SteamRailway
         public static string PlaceAt(string scene, BuiltTrack track, float arcLength, Vector3 viewer)
         {
             var source = PickSource();
-            if (source == null) return L.T("Bu bölgede kopyalanacak bir tünel modeli yok.", "This region has no tunnel model to copy.");
+            if (source == null) return Localizer.Translate("Bu bölgede kopyalanacak bir tünel modeli yok.", "This region has no tunnel model to copy.");
             track.Path.Sample(arcLength, out var point, out var tangent);
             tangent.y = 0f; tangent.Normalize();
             var inward = Vector3.Dot(tangent, point - viewer) >= 0f ? tangent : -tangent;
@@ -146,12 +152,12 @@ namespace SteamRailway
             // the model's rails: centre at x -0.025, rail top 0.402 above its origin; the mouth MouthDepth in front
             track.Path.Sample(Mathf.Clamp(arcLength + Vector3.Dot(inward, tangent) * MouthDepth, 0f, track.Path.Length), out var inner, out _);
             var origin = inner - (right * RailPieces.CentreX + Vector3.up * RailPieces.RailTop);
-            var tunnel = new TunnelData { Source = source.name, SourcePos = CustomLines.F(source.position), Pos = CustomLines.F(origin),
-                                     Rot = new[] { rotation.x, rotation.y, rotation.z, rotation.w } };
+            var tunnel = new TunnelData { Source = source.name, SourcePosition = CustomLines.ToFloatArray(source.position), Position = CustomLines.ToFloatArray(origin),
+                                     Rotation = new[] { rotation.x, rotation.y, rotation.z, rotation.w } };
             For(scene).Tunnels.Add(tunnel);
             Save();
             Spawn(tunnel);
-            return L.T($"Tünel yerleştirildi ({source.name}).", $"Tunnel placed ({source.name}).");
+            return Localizer.Translate($"Tünel yerleştirildi ({source.name}).", $"Tunnel placed ({source.name}).");
         }
 
         /// Removes the placed tunnel nearest to p (within r metres).
@@ -161,7 +167,7 @@ namespace SteamRailway
             TunnelData best = null; float bestDistance = radius * radius;
             foreach (var tunnel in tunnelFile.Tunnels)
             {
-                var otherPoint = CustomLines.V(tunnel.Pos);
+                var otherPoint = CustomLines.ToVector3(tunnel.Position);
                 float deltaX = otherPoint.x - point.x, deltaZ = otherPoint.z - point.z, deltaDistance = deltaX * deltaX + deltaZ * deltaZ;
                 if (deltaDistance < bestDistance) { bestDistance = deltaDistance; best = tunnel; }
             }

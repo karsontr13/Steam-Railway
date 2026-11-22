@@ -7,10 +7,10 @@ namespace SteamRailway
     internal enum Realism { Simple, Medium }
 
     /// Everything that is saved for one locomotive.
-    internal sealed class SimState
+    internal sealed class SteamSimulationState
     {
-        public float BoilerWater { get; set; } = SteamSim.BoilerCapacity * 0.7f;   // litres
-        public float TenderWater { get; set; } = SteamSim.TenderCapacity * 0.5f;   // litres
+        public float BoilerWater { get; set; } = SteamSimulation.BoilerCapacity * SteamSimulation.StartBoilerFillFraction;   // litres
+        public float TenderWater { get; set; } = SteamSimulation.TenderCapacity * SteamSimulation.StartTenderFillFraction;   // litres
         public float BoilerTemp { get; set; } = float.NaN;                         // °C, NaN = ambient on first run
         public float Regulator { get; set; }                                       // 0..1
         public int Reverser { get; set; }                                          // -1, 0, 1
@@ -21,10 +21,14 @@ namespace SteamRailway
         public bool Injector { get; set; }
         public bool Blower { get; set; }
         public bool Headlight { get; set; }                                        // lamps (need steam for the generator)
+        public bool CabLight { get; set; }                                         // the small ceiling lamp in the cab
+        public bool BedOpen { get; set; }                                          // the folding bed is unfolded
         public bool Pump { get; set; }
         public float SnowKg { get; set; }                                          // snow in the tender, melting
-        public float BoilerCondition { get; set; } = 100f;                         // %
-        public float ValveCondition { get; set; } = 100f;                          // % safety valve
+        public float SnowOnTop { get; set; }                                       // 0..1 snow settled on the roof, tank tops, running boards
+        public float SnowOnFront { get; set; }                                     // 0..1 snow crust on the forward faces
+        public float BoilerCondition { get; set; } = SteamSimulation.FullConditionPercentage;   // %
+        public float ValveCondition { get; set; } = SteamSimulation.FullConditionPercentage;    // % safety valve
         public bool PlugBlown { get; set; }                                        // fusible plug melted
         public bool Exploded { get; set; }
         public float FireCoal { get; set; }                                        // obsolete (own coal fire)
@@ -35,9 +39,12 @@ namespace SteamRailway
 
     /// The coal steam locomotive model. The boiler runs on game time (so it keeps working while sleeping or
     /// passing time); motion runs on real time. Called once per frame from the patched SteamTrainEngine.UpdateEngine.
-    internal sealed class SteamSim
+    internal sealed class SteamSimulation
     {
         // --- boiler
+        public const float StartBoilerFillFraction = 0.7f;
+        public const float StartTenderFillFraction = 0.5f;
+        public const float FullConditionPercentage = 100f;
         public const float BoilerCapacity = 600f;       // L
         public const float TenderCapacity = 2000f;      // L
         const float HeatRate = 2.8f;                    // °C/game-min with a full fire at the nominal water level
@@ -53,6 +60,38 @@ namespace SteamRailway
         const float InjectorCooling = 0.5f;             // °C/min
         const float AutoFeedLevel = 0.7f;               // Simple mode keeps the boiler around 70 %
         const float LowWaterLevel = 0.05f;
+        const float MaximumStepInGameMinutes = 5f;
+        const double MinutesPerHourExact = 60.0;
+        const float SecondsPerMinute = 60f;
+        const float BlowerDraftBonus = 0.4f;
+        const float ExhaustDraftGain = 0.3f;
+        const float ExhaustDraftSpeedOffset = 0.2f;
+        const float FireDoorOpenHeatFactor = 0.7f;
+        const float MinimumWaterForHeatInLitres = 30f;
+        const float SteamDrawBase = 0.3f;
+        const float SteamDrawFullPressureInPsi = 60f;
+        const float InjectorFullLevel = 0.98f;
+        const float BoilingTemperatureInCelsius = 100f;
+        const float SnowMeltStartTemperatureInCelsius = 40f;
+        const float SnowMeltTemperatureRangeInCelsius = 110f;
+        const float SnowMeltAmbientRangeInCelsius = 10f;
+        const float ColdFirebox = 20f;
+        const float FireboxTemperatureRange = 560f;
+        const float FireboxDraftNormalization = 1.4f;
+        const float FireOutLevel = 0.005f;
+        const float DryExplosionPressureInPsi = 80f;
+        const float FatigueExplosionPressureInPsi = 60f;
+        const float ExplodedValveConditionLimit = 20f;
+        const float ExplodedBoilerTemperatureInCelsius = 60f;
+        const float TractionMinimumPressureInPsi = 5f;
+        const float GravityInMetersPerSecondSquared = 9.81f;
+        const float LineEndToleranceInMeters = 0.01f;
+        const float MovementDirectionThreshold = 0.001f;
+        const float TurnRoundMaximumSpeedInMetersPerSecond = 0.1f;
+        const float ReverserMaximumSpeedInMetersPerSecond = 0.5f;
+        const float RegulatorNotchesPerFull = 10f;
+        const float PumpFullTankToleranceInLitres = 0.5f;
+        const float PumpStoppedSpeedInMetersPerSecond = 0.1f;
 
         // --- water supply
         public const float SnowCapacityKg = 300f;
@@ -61,14 +100,15 @@ namespace SteamRailway
         public const float PumpFlow = 15f;              // L/min
         public const float ShovelMinutesPerKg = 0.1f;   // game minutes to shovel 1 kg of snow
         public const float PumpMinPsi = 30f;
-        /// Below PumpMinPsi the pump is worked by hand: slower, but it needs no steam, so an empty boiler and an
-        /// empty tank can always be refilled (otherwise firing a dry boiler for steam would burn it first).
+        /// Below PumpMinPsi the pump is worked by hand: slower, but it needs no steam.
         public const float HandPumpFlow = 4f;           // L/min
         const float PumpCooling = 1f;                   // °C/min (the pump runs on boiler steam)
 
         // --- motion (real seconds)
         public const float MaxSpeed = 15f;              // m/s
         const float MaxTractionAccel = 0.8f;            // m/s² at full pressure and full regulator
+        /// The locomotive with its tender (the traction and brake figures are for it alone).
+        public const float LocomotiveMassInKilograms = 70000f;
         const float RollingResistance = 0.05f;          // m/s²
         const float AirResistance = 0.002f;             // × v²
         const float SteamBrakeDecel = 1.5f;
@@ -76,7 +116,7 @@ namespace SteamRailway
         const float HandBrakeDecel = 0.8f;
 
         public readonly SteamTrain Train;
-        public readonly SimState S;
+        public readonly SteamSimulationState State;
 
         public float Pressure { get; private set; }
         public float Velocity { get; private set; }
@@ -96,18 +136,15 @@ namespace SteamRailway
 
         public bool FireDoorOpen => Stove != null && Stove.m_Open;
         public bool FireBurning => Fire != null && Fire.IsBurning();
-        /// Firebox temperature for the heat dial (deg C).
-        /// Follows the fire's intensity slowly (the brick arch and the plates hold heat), so opening or closing the
-        /// blower moves the dial gradually instead of in a jump.
+        /// Firebox temperature for the heat dial (deg C); it follows the fire's intensity slowly.
         public float FireboxTemp => float.IsNaN(m_FireboxTemp) ? TargetFireboxTemp : m_FireboxTemp;
-        float TargetFireboxTemp => 20f + 560f * Mathf.Clamp01(S.FireLevel * Draft / 1.4f);
+        float TargetFireboxTemp => ColdFirebox + FireboxTemperatureRange * Mathf.Clamp01(State.FireLevel * Draft / FireboxDraftNormalization);
         float m_FireboxTemp = float.NaN;
         const float FireboxTempMinutes = 4f;              // time constant of the firebox temperature
 
-        /// The cab cupboard is open while its inventory panel shows it.
         /// The turbo generator runs on boiler steam: the lamps light only with some pressure.
         public const float LampPressure = 15f;
-        public bool LampsLit => S.Headlight && Pressure > LampPressure;
+        public bool LampsLit => State.Headlight && Pressure > LampPressure;
 
         public bool LockerOpen
         {
@@ -120,14 +157,14 @@ namespace SteamRailway
                 return panel != null && panel.IsEnabled() && panel.m_Container == container;
             }
         }
-        public float BoilerLevel => S.BoilerWater / BoilerCapacity;
+        public float BoilerLevel => State.BoilerWater / BoilerCapacity;
         public static Realism Mode => SteamRailwayMod.RealismMode;
 
-        public SteamSim(SteamTrain train, SimState state)
+        public SteamSimulation(SteamTrain train, SteamSimulationState state)
         {
             Train = train;
-            S = state ?? new SimState();
-            if (S.Reverser == 0 && S.Regulator == 0) Velocity = 0f;
+            State = state ?? new SteamSimulationState();
+            if (State.Reverser == 0 && State.Regulator == 0) Velocity = 0f;
         }
 
         // ------------------------------------------------------------------ per frame
@@ -135,15 +172,16 @@ namespace SteamRailway
         public void Tick()
         {
             double hours = GameManager.GetTimeOfDayComponent().GetHoursPlayedNotPaused();
-            if (S.LastGameHours < 0 || hours < S.LastGameHours) S.LastGameHours = hours;
-            float gameMinutes = (float)((hours - S.LastGameHours) * 60.0);
-            S.LastGameHours = hours;
+            if (State.LastGameHours < 0 || hours < State.LastGameHours) State.LastGameHours = hours;
+            float gameMinutes = (float)((hours - State.LastGameHours) * MinutesPerHourExact);
+            State.LastGameHours = hours;
 
             // Long time skips (sleep, pass time, loading) are simulated in steps so nothing overshoots.
             while (gameMinutes > 0f)
             {
-                float step = Mathf.Min(gameMinutes, 5f);
+                float step = Mathf.Min(gameMinutes, MaximumStepInGameMinutes);
                 TickBoiler(step);
+                SnowCover.Advance(State, step, Velocity);
                 gameMinutes -= step;
             }
             TickMotion(Time.deltaTime);
@@ -152,77 +190,79 @@ namespace SteamRailway
             Audio?.Update(this);
             Smoke?.Update(this, Time.deltaTime);
             FireboxControl.UpdateEffects(this);
+            BoilerRepair.Poll();
         }
 
         public LocomotiveAnimator Animator { get; set; }
         public TrainAudio Audio { get; set; }
         public LocoSmoke Smoke { get; set; }
+        public FireEmbers Embers { get; set; }
 
         void TickBoiler(float minutes)
         {
             float ambient = GameManager.GetWeatherComponent().GetCurrentTemperatureWithoutHeatSources();
-            if (float.IsNaN(S.BoilerTemp)) S.BoilerTemp = ambient;
+            if (float.IsNaN(State.BoilerTemp)) State.BoilerTemp = ambient;
 
             float draft = 1f;
-            if (Mode == Realism.Medium && S.Blower) draft += 0.4f;
+            if (Mode == Realism.Medium && State.Blower) draft += BlowerDraftBonus;
             // A working engine pulls air through the fire with its exhaust; an open fire door wastes heat.
-            draft += 0.3f * S.Regulator * Mathf.Clamp01(Mathf.Abs(Velocity) / MaxSpeed + 0.2f);
+            draft += ExhaustDraftGain * State.Regulator * Mathf.Clamp01(Mathf.Abs(Velocity) / MaxSpeed + ExhaustDraftSpeedOffset);
             Draft = draft;
             TickFire(minutes, draft);
             if (float.IsNaN(m_FireboxTemp)) m_FireboxTemp = TargetFireboxTemp;
             m_FireboxTemp += (TargetFireboxTemp - m_FireboxTemp) * Mathf.Clamp01(minutes / FireboxTempMinutes);
             bool burning = FireBurning;
-            FireHeat = S.FireLevel * draft * (FireDoorOpen ? 0.7f : 1f);
+            FireHeat = State.FireLevel * draft * (FireDoorOpen ? FireDoorOpenHeatFactor : 1f);
 
-            float waterFactor = NominalWater / Mathf.Max(S.BoilerWater, 30f);
+            float waterFactor = NominalWater / Mathf.Max(State.BoilerWater, MinimumWaterForHeatInLitres);
             float deltaTime = FireHeat * HeatRate * waterFactor * minutes;
-            deltaTime -= (S.BoilerTemp - ambient) * CoolingPerMin * minutes;
+            deltaTime -= (State.BoilerTemp - ambient) * CoolingPerMin * minutes;
 
             // Steam drawn by the cylinders.
             float steam = 0f;
-            if (Pressure > 0f && S.Regulator > 0f && S.Reverser != 0)
-                steam = S.Regulator * (0.3f + Mathf.Abs(Velocity) / MaxSpeed) * Mathf.Clamp01(Pressure / 60f);
+            if (Pressure > 0f && State.Regulator > 0f && State.Reverser != 0)
+                steam = State.Regulator * (SteamDrawBase + Mathf.Abs(Velocity) / MaxSpeed) * Mathf.Clamp01(Pressure / SteamDrawFullPressureInPsi);
             deltaTime -= steam * SteamCoolingPerUnit * waterFactor * minutes;
-            S.BoilerWater -= steam * WaterPerSteamUnit * minutes;
+            State.BoilerWater -= steam * WaterPerSteamUnit * minutes;
 
             // Feed water.
-            bool feed = Mode == Realism.Simple ? BoilerLevel < AutoFeedLevel : S.Injector;
-            InjectorWorking = feed && S.TenderWater > 0f && BoilerLevel < 0.98f;
+            bool feed = Mode == Realism.Simple ? BoilerLevel < AutoFeedLevel : State.Injector;
+            InjectorWorking = feed && State.TenderWater > 0f && BoilerLevel < InjectorFullLevel;
             if (InjectorWorking)
             {
-                float flow = Mathf.Min(InjectorFlow * minutes, S.TenderWater, BoilerCapacity - S.BoilerWater);
-                S.TenderWater -= flow;
-                S.BoilerWater += flow;
+                float flow = Mathf.Min(InjectorFlow * minutes, State.TenderWater, BoilerCapacity - State.BoilerWater);
+                State.TenderWater -= flow;
+                State.BoilerWater += flow;
                 deltaTime -= InjectorCooling * minutes;
             }
 
             // Snow in the tender melts with the boiler's waste heat (and above freezing, with the air).
-            if (S.SnowKg > 0f)
+            if (State.SnowKg > 0f)
             {
-                float heat = Mathf.Clamp01((S.BoilerTemp - 40f) / 110f) + Mathf.Clamp01(ambient / 10f);
-                float melt = Mathf.Min(S.SnowKg, SnowMeltPerMin * heat * minutes, TenderCapacity - S.TenderWater);
-                S.SnowKg -= melt;
-                S.TenderWater += melt;
+                float heat = Mathf.Clamp01((State.BoilerTemp - SnowMeltStartTemperatureInCelsius) / SnowMeltTemperatureRangeInCelsius) + Mathf.Clamp01(ambient / SnowMeltAmbientRangeInCelsius);
+                float melt = Mathf.Min(State.SnowKg, SnowMeltPerMin * heat * minutes, TenderCapacity - State.TenderWater);
+                State.SnowKg -= melt;
+                State.TenderWater += melt;
             }
 
-            S.BoilerTemp += deltaTime;
+            State.BoilerTemp += deltaTime;
 
             // A blown plug or a burst boiler cannot hold steam.
-            if (S.PlugBlown || S.Exploded) S.BoilerTemp = Mathf.Min(S.BoilerTemp, 100f);
+            if (State.PlugBlown || State.Exploded) State.BoilerTemp = Mathf.Min(State.BoilerTemp, BoilingTemperatureInCelsius);
 
             // Safety valve: the boiler cannot go above the temperature of the valve's opening pressure.
             // A worn valve (Medium) opens late.
-            float maxTemp = 100f + ValveOpeningPressure / PsiPerDegree;
-            SafetyValveOpen = S.BoilerTemp > maxTemp;
+            float maxTemp = BoilingTemperatureInCelsius + ValveOpeningPressure / PsiPerDegree;
+            SafetyValveOpen = State.BoilerTemp > maxTemp;
             if (SafetyValveOpen)
             {
-                S.BoilerTemp = maxTemp;
-                S.BoilerWater -= SafetyValveWaterPerMin * minutes;
-                if (Mode == Realism.Medium) S.ValveCondition = Mathf.Max(0f, S.ValveCondition - ValveWearPerMin * minutes);
+                State.BoilerTemp = maxTemp;
+                State.BoilerWater -= SafetyValveWaterPerMin * minutes;
+                if (Mode == Realism.Medium) State.ValveCondition = Mathf.Max(0f, State.ValveCondition - ValveWearPerMin * minutes);
             }
 
-            S.BoilerWater = Mathf.Max(0f, S.BoilerWater);
-            Pressure = Mathf.Max(0f, (S.BoilerTemp - 100f) * PsiPerDegree);
+            State.BoilerWater = Mathf.Max(0f, State.BoilerWater);
+            Pressure = Mathf.Max(0f, (State.BoilerTemp - BoilingTemperatureInCelsius) * PsiPerDegree);
 
             if (Mode == Realism.Simple) TickSimpleFailures(burning);
             else TickMediumFailures(burning, ambient, minutes);
@@ -237,19 +277,19 @@ namespace SteamRailway
             {
                 target = Mathf.Clamp01(Fire.GetCurrentTempIncrease() / FullFireTemp);
                 // Extra draft (blower, exhaust) burns the fuel faster.
-                if (draft > 1f) Fire.ReduceDurationByTODSeconds((draft - 1f) * minutes * 60f);
+                if (draft > 1f) Fire.ReduceDurationByTODSeconds((draft - 1f) * minutes * SecondsPerMinute);
             }
-            S.FireLit = FireBurning;
-            S.FireLevel += (target - S.FireLevel) * Mathf.Clamp01(minutes / FireResponseMin);
+            State.FireLit = FireBurning;
+            State.FireLevel += (target - State.FireLevel) * Mathf.Clamp01(minutes / FireResponseMin);
             // Only snap to zero when the fire is really out (per-frame steps are tiny, so a threshold would trap the rise).
-            if (target <= 0f && S.FireLevel < 0.005f) S.FireLevel = 0f;
+            if (target <= 0f && State.FireLevel < FireOutLevel) State.FireLevel = 0f;
         }
 
         public void ExtinguishFire()
         {
             if (FireBurning) Fire.TurnOff();
-            S.FireLit = false;
-            S.FireLevel = 0f;
+            State.FireLit = false;
+            State.FireLevel = 0f;
         }
 
         // ------------------------------------------------------------------ failures
@@ -264,7 +304,7 @@ namespace SteamRailway
 
         public float ValveOpeningPressure => Mode == Realism.Simple
             ? MaxPressure
-            : MaxPressure * (1f + (1f - S.ValveCondition / 100f) * ValveLateOpeningMax);
+            : MaxPressure * (1f + (1f - State.ValveCondition / FullConditionPercentage) * ValveLateOpeningMax);
 
         /// Simple mode: running the boiler dry just drops the fire.
         void TickSimpleFailures(bool burning)
@@ -272,56 +312,56 @@ namespace SteamRailway
             if (BoilerLevel < LowWaterLevel && burning)
             {
                 ExtinguishFire();
-                CabControls.Message(L.T("Kazanda su kalmadı: ateş söndü.", "The boiler ran dry: the fire went out."));
+                CabControls.Message(Localizer.Translate("Kazanda su kalmadı: ateş söndü.", "The boiler ran dry: the fire went out."));
             }
         }
 
         void TickMediumFailures(bool burning, float ambient, float minutes)
         {
-            if (S.Exploded)
+            if (State.Exploded)
             {
                 if (burning) ExtinguishFire();
                 return;
             }
 
             // Water from a blown plug pours into the firebox and keeps the fire out.
-            if (S.PlugBlown && burning)
+            if (State.PlugBlown && burning)
             {
                 ExtinguishFire();
-                CabControls.Message(L.T("Eriyen tapa onarılmadan ocak yanmaz.", "The firebox won't burn until the fusible plug is replaced."));
+                CabControls.Message(Localizer.Translate("Eriyen tapa onarılmadan ocak yanmaz.", "The firebox won't burn until the fusible plug is replaced."));
             }
 
             if (Pressure > MaxPressure)
-                S.BoilerCondition -= (Pressure - MaxPressure) / MaxPressure * OverpressureStrainPerMin * minutes;
+                State.BoilerCondition -= (Pressure - MaxPressure) / MaxPressure * OverpressureStrainPerMin * minutes;
 
             // Fusible plug: melts before the crown sheet is exposed.
-            if (!S.PlugBlown && BoilerLevel < PlugLevel && S.BoilerTemp > PlugTemp && burning)
+            if (!State.PlugBlown && BoilerLevel < PlugLevel && State.BoilerTemp > PlugTemp && burning)
             {
-                S.PlugBlown = true;
-                S.BoilerCondition -= PlugDamage;
-                S.BoilerTemp = 100f;
+                State.PlugBlown = true;
+                State.BoilerCondition -= PlugDamage;
+                State.BoilerTemp = BoilingTemperatureInCelsius;
                 Pressure = 0f;
                 ExtinguishFire();
-                CabControls.Message(L.T("Eriyen tapa eridi! Buhar ocağa boşaldı ve ateşi söndürdü.", "The fusible plug melted! Steam poured into the firebox and put the fire out."));
+                CabControls.Message(Localizer.Translate("Eriyen tapa eridi! Buhar ocağa boşaldı ve ateşi söndürdü.", "The fusible plug melted! Steam poured into the firebox and put the fire out."));
                 SteamRailwayMod.Log.Warning("Fusible plug blown.");
                 return;
             }
 
             bool overpressure = Pressure > ExplosionPressure;
-            bool dry = BoilerLevel < LowWaterLevel && Pressure > 80f;
-            bool fatigued = S.BoilerCondition <= 0f && Pressure > 60f;
+            bool dry = BoilerLevel < LowWaterLevel && Pressure > DryExplosionPressureInPsi;
+            bool fatigued = State.BoilerCondition <= 0f && Pressure > FatigueExplosionPressureInPsi;
             if (overpressure || dry || fatigued) Explode(ambient);
-            S.BoilerCondition = Mathf.Clamp(S.BoilerCondition, 0f, 100f);
+            State.BoilerCondition = Mathf.Clamp(State.BoilerCondition, 0f, FullConditionPercentage);
         }
 
         void Explode(float ambient)
         {
-            S.Exploded = true;
-            S.BoilerCondition = 0f;
-            S.ValveCondition = Mathf.Min(S.ValveCondition, 20f);
-            S.BoilerWater = 0f;
-            S.BoilerTemp = Mathf.Max(ambient, 60f);
-            S.Regulator = 0f;
+            State.Exploded = true;
+            State.BoilerCondition = 0f;
+            State.ValveCondition = Mathf.Min(State.ValveCondition, ExplodedValveConditionLimit);
+            State.BoilerWater = 0f;
+            State.BoilerTemp = Mathf.Max(ambient, ExplodedBoilerTemperatureInCelsius);
+            State.Regulator = 0f;
             Pressure = 0f;
             Velocity = 0f;
             ExtinguishFire();
@@ -332,69 +372,69 @@ namespace SteamRailway
         void TickMotion(float deltaTime)
         {
             if (deltaTime <= 0f) return;
-            float firstValue = 0f;
+            float acceleration = 0f;
 
-            float traction = MaxTractionAccel * S.Regulator * Mathf.Clamp01(Pressure / MaxPressure) * S.Reverser;
-            if (Pressure < 5f) traction = 0f;
-            firstValue += traction;
+            float traction = MaxTractionAccel * State.Regulator * Mathf.Clamp01(Pressure / MaxPressure) * State.Reverser * MassShare;
+            if (Pressure < TractionMinimumPressureInPsi) traction = 0f;
+            acceleration += traction;
 
             // Gravity along the track (+Z of the train is forward).
-            firstValue -= 9.81f * Train.transform.forward.y;
+            acceleration -= GravityInMetersPerSecondSquared * Train.transform.forward.y;
 
-            float value = Velocity;
-            float resist = RollingResistance + AirResistance * value * value;
+            float nextVelocity = Velocity;
+            float resistance = RollingResistance + AirResistance * nextVelocity * nextVelocity;
             float brake = 0f;
-            if (S.SteamBrake && Pressure >= SteamBrakeMinPsi) brake += SteamBrakeDecel;
-            if (S.HandBrake) brake += HandBrakeDecel;
+            if (State.SteamBrake && Pressure >= SteamBrakeMinPsi) brake += SteamBrakeDecel;
+            if (State.HandBrake) brake += HandBrakeDecel;
+            brake *= MassShare;   // only the engine has brakes
 
-            value += firstValue * deltaTime;
-            float slow = (resist + brake) * deltaTime;
-            if (Mathf.Abs(value) <= slow) value = 0f;
-            else value -= Mathf.Sign(value) * slow;
+            nextVelocity += acceleration * deltaTime;
+            float slowdown = (resistance + brake) * deltaTime;
+            if (Mathf.Abs(nextVelocity) <= slowdown) nextVelocity = 0f;
+            else nextVelocity -= Mathf.Sign(nextVelocity) * slowdown;
 
-            // Ends of the line (velocity is the engine's own: + chimney first; along the line it is v * Facing).
+            // Ends of the line (the engine's velocity is + chimney first; along the line it is times Facing).
             var splineController = Train.m_SplineController;
             if (splineController != null && splineController.Spline != null)
             {
-                float lineV = value * FacingSign;
-                if (splineController.Position <= 0.01f && lineV < 0f) value = 0f;
-                if (splineController.Position >= splineController.Spline.Length - 0.01f && lineV > 0f) value = 0f;
+                float lineVelocity = nextVelocity * FacingSign;
+                if (splineController.Position <= LineEndToleranceInMeters && lineVelocity < 0f) nextVelocity = 0f;
+                if (splineController.Position >= splineController.Spline.Length - LineEndToleranceInMeters && lineVelocity > 0f) nextVelocity = 0f;
             }
-            Velocity = Mathf.Clamp(value, -MaxSpeed, MaxSpeed);
+            Velocity = Mathf.Clamp(nextVelocity, -MaxSpeed, MaxSpeed);
         }
 
-        public int FacingSign => S.Facing < 0 ? -1 : 1;
+        public int FacingSign => State.Facing < 0 ? -1 : 1;
 
         /// Speed along the line (+ towards the line's end).
         public float LineVelocity => Velocity * FacingSign;
 
-        /// The game's own code moves the train along the spline with the engine's velocity and drives the
-        /// cockpit needles from its pressure, so the simulation feeds those values.
+        /// The game's own code moves the train and drives the cockpit needles from the engine state, so the
+        /// simulation feeds those values.
         void PushToEngine()
         {
             var engineState = Train.m_Engine.CurrentState;
-            float lineV = LineVelocity;
-            engineState.m_Velocity = lineV;
-            // The game reads this sign as the way the train stands on the line (it turns the model round for -1),
-            // so it is the engine's facing, not the sign of its speed.
+            float lineVelocity = LineVelocity;
+            engineState.m_Velocity = lineVelocity;
+            // the game reads this sign as the way the train stands on the line, not as the sign of its speed
             engineState.m_LastVelocitySign = FacingSign;
             engineState.m_SteamPressure = Pressure;
-            engineState.m_BrakesActive = S.SteamBrake || S.HandBrake;
-            engineState.m_ThrottlePosition = S.Reverser < 0 ? Il2CppTLD.SteamTrain.ThrottlePosition.Reverse
-                : S.Reverser > 0 ? Il2CppTLD.SteamTrain.ThrottlePosition.Low : Il2CppTLD.SteamTrain.ThrottlePosition.Neutral;
+            engineState.m_BrakesActive = State.SteamBrake || State.HandBrake;
+            engineState.m_ThrottlePosition = State.Reverser < 0 ? Il2CppTLD.SteamTrain.ThrottlePosition.Reverse
+                : State.Reverser > 0 ? Il2CppTLD.SteamTrain.ThrottlePosition.Low : Il2CppTLD.SteamTrain.ThrottlePosition.Neutral;
 
             var splineController = Train.m_SplineController;
-            if (splineController != null && Mathf.Abs(lineV) > 0.001f)
+            if (splineController != null && Mathf.Abs(lineVelocity) > MovementDirectionThreshold)
             {
-                var dir = lineV < 0f ? Il2CppFluffyUnderware.Curvy.Controllers.MovementDirection.Backward
+                var movementDirection = lineVelocity < 0f ? Il2CppFluffyUnderware.Curvy.Controllers.MovementDirection.Backward
                                      : Il2CppFluffyUnderware.Curvy.Controllers.MovementDirection.Forward;
-                if (splineController.MovementDirection != dir) splineController.MovementDirection = dir;
+                if (splineController.MovementDirection != movementDirection) splineController.MovementDirection = movementDirection;
             }
             EnforceFacing();
         }
 
-        /// The engine faces the way it stands (Facing), whatever direction it runs; the game's own train code
-        /// also turns and locks the rotation, so this is applied before and after it every frame.
+        /// The engine faces the way it stands (Facing), whatever direction it runs; applied before and after the
+        /// game's own train code every frame.
         public void EnforceFacing()
         {
             var splineController = Train.m_SplineController;
@@ -406,20 +446,26 @@ namespace SteamRailway
             if (splineController.LockRotation) splineController.LockRotation = false;
             // the game sets the direction of travel from the facing every frame: in reverse it must run backwards
             float level = LineVelocity;
-            if (Mathf.Abs(level) > 0.001f)
+            if (Mathf.Abs(level) > MovementDirectionThreshold)
             {
-                var dir = level < 0f ? Il2CppFluffyUnderware.Curvy.Controllers.MovementDirection.Backward
+                var movementDirection = level < 0f ? Il2CppFluffyUnderware.Curvy.Controllers.MovementDirection.Backward
                                   : Il2CppFluffyUnderware.Curvy.Controllers.MovementDirection.Forward;
-                if (splineController.MovementDirection != dir) splineController.MovementDirection = dir;
+                if (splineController.MovementDirection != movementDirection) splineController.MovementDirection = movementDirection;
             }
         }
 
         /// Turns the engine round on its line (a U-turn: wye, loop or turntable). Only while standing.
         public bool TurnRound()
         {
-            if (Mathf.Abs(Velocity) > 0.1f) return false;
-            S.Facing = -FacingSign;
-            S.Reverser = 0;
+            if (Mathf.Abs(Velocity) > TurnRoundMaximumSpeedInMetersPerSecond) return false;
+            // coupled wagons hang on the engine's line direction: they would be left running the wrong way
+            if (TrailingMassInKilograms > 0f)
+            {
+                CabControls.Message(Localizer.Translate("Bağlı vagonla ters dönülemez: önce vagonu ayır.", "You can't turn round with a wagon coupled: uncouple it first."));
+                return false;
+            }
+            State.Facing = -FacingSign;
+            State.Reverser = 0;
             Velocity = 0f;
             EnforceFacing();
             return true;
@@ -427,29 +473,29 @@ namespace SteamRailway
 
         // ------------------------------------------------------------------ controls
 
-        public void RegulatorStep(float delta) => S.Regulator = Mathf.Clamp01(Mathf.Round((S.Regulator + delta) * 10f) / 10f);
+        public void RegulatorStep(float delta) => State.Regulator = Mathf.Clamp01(Mathf.Round((State.Regulator + delta) * RegulatorNotchesPerFull) / RegulatorNotchesPerFull);
 
-        public void SetReverser(int dir)
+        public void SetReverser(int reverserPosition)
         {
-            // The reverser may only be thrown while (nearly) stopped.
-            if (Mathf.Abs(Velocity) > 0.5f && dir != 0 && dir != S.Reverser) return;
-            S.Reverser = dir;
+            // the reverser may only be thrown while (nearly) stopped
+            if (Mathf.Abs(Velocity) > ReverserMaximumSpeedInMetersPerSecond && reverserPosition != 0 && reverserPosition != State.Reverser) return;
+            State.Reverser = reverserPosition;
         }
 
-        public float TenderSpace => TenderCapacity - S.TenderWater;
+        public float TenderSpace => TenderCapacity - State.TenderWater;
 
-        public void PourInWater(float litres) => S.TenderWater = Mathf.Min(TenderCapacity, S.TenderWater + litres);
+        public void PourInWater(float litres) => State.TenderWater = Mathf.Min(TenderCapacity, State.TenderWater + litres);
 
-        public void AddSnow(float kilograms) => S.SnowKg = Mathf.Min(SnowCapacityKg, S.SnowKg + Mathf.Max(0f, kilograms));
+        public void AddSnow(float kilograms) => State.SnowKg = Mathf.Min(SnowCapacityKg, State.SnowKg + Mathf.Max(0f, kilograms));
 
         /// Why the steam pump cannot run now (null = it can).
-        public static string PumpError(SteamSim simulation)
+        public static string PumpError(SteamSimulation simulation)
         {
-            if (simulation.TenderSpace <= 0.5f) return L.T("Su tankı dolu.", "The water tank is full.");
-            if (Mathf.Abs(simulation.Velocity) >= 0.1f) return L.T("Pompa için tren durmalı.", "The train must be stopped to pump.");
+            if (simulation.TenderSpace <= PumpFullTankToleranceInLitres) return Localizer.Translate("Su tankı dolu.", "The water tank is full.");
+            if (Mathf.Abs(simulation.Velocity) >= PumpStoppedSpeedInMetersPerSecond) return Localizer.Translate("Pompa için tren durmalı.", "The train must be stopped to pump.");
             simulation.WaterSourceDistance = WaterSources.NearestDistance(simulation.Train.transform.position);
             if (simulation.WaterSourceDistance > WaterSources.HoseLength)
-                return L.T($"Hortum {WaterSources.HoseLength:0} m içinde açık suya (buz deliği, akarsu) ulaşmıyor.",
+                return Localizer.Translate($"Hortum {WaterSources.HoseLength:0} m içinde açık suya (buz deliği, akarsu) ulaşmıyor.",
                            $"The hose can't reach open water (an ice hole or flowing water) within {WaterSources.HoseLength:0} m.");
             return null;
         }
@@ -461,14 +507,20 @@ namespace SteamRailway
         public float PumpIn(float litres, bool bySteam)
         {
             litres = Mathf.Min(litres, TenderSpace);
-            S.TenderWater += litres;
+            State.TenderWater += litres;
             if (!bySteam) return litres;
             float minutes = litres / PumpFlow;
-            float waterFactor = NominalWater / Mathf.Max(S.BoilerWater, 30f);
-            S.BoilerTemp -= PumpCooling * waterFactor * minutes;
+            float waterFactor = NominalWater / Mathf.Max(State.BoilerWater, MinimumWaterForHeatInLitres);
+            State.BoilerTemp -= PumpCooling * waterFactor * minutes;
             return litres;
         }
 
         public void RestoreMotion(float velocity) => Velocity = velocity;
+
+        /// The wagons coupled to this engine (Wagons sets it every frame): a heavier train gathers speed and
+        /// stops more slowly.
+        public float TrailingMassInKilograms { get; set; }
+
+        float MassShare => LocomotiveMassInKilograms / (LocomotiveMassInKilograms + Mathf.Max(0f, TrailingMassInKilograms));
     }
 }

@@ -2,13 +2,31 @@ using UnityEngine;
 
 namespace SteamRailway
 {
-    /// The visible shaft of light in front of a lamp: an open cone along local +Z, bright at the lens and fading out
-    /// along its length and towards its rim (vertex colours), drawn additively with the game's Particles/Additive shader.
+    /// The visible shaft of light in front of a lamp: an open cone along local +Z that fades out along its
+    /// length and towards its rim, drawn additively.
     internal static class LampBeam
     {
-        const float Length = 30f, LensRadius = 0.16f, EndRadius = 2.4f;
-        const int Sides = 24, Rings = 8;
-        static readonly Color Tint = new Color(0.075f, 0.068f, 0.055f, 1f);   // a faint haze lit in the snow-laden air
+        const float Length = 45f;
+        const float LensRadius = 0.16f;
+        const float EndRadius = 4.6f;
+        const int Sides = 24;
+        const int Rings = 8;
+        const float CoreRadiusFactor = 0.45f;
+        const float CoreBrightness = 1f;
+        const float RimBrightness = 0.35f;
+        const float FadePower = 2.2f;
+        const float LensFadeInRings = 12f;
+        const float BeamOffsetInMeters = 0.05f;
+        const int AdditiveRenderQueue = 3000;
+        const float DarknessRefreshSeconds = 2f;
+        const float DuskStartHour = 17f;
+        const float DuskEndHour = 20f;
+        const float DawnStartHour = 8f;
+        const float DawnEndHour = 5f;
+        const float HoursPerDay = 24f;
+        const float MinimumVisibleScale = 0.01f;
+        const string TintColorPropertyName = "_TintColor";
+        static readonly Color Tint = new Color(0.075f, 0.068f, 0.055f, 1f);   // a faint haze lit in the snowy air
 
         static Mesh s_Mesh;
         static Shader s_Shader;
@@ -16,38 +34,38 @@ namespace SteamRailway
         static Mesh BuildMesh()
         {
             // two nested cones: a narrow bright core and a wider soft rim
-            var verts = new System.Collections.Generic.List<Vector3>();
-            var cols = new System.Collections.Generic.List<Color>();
-            var tris = new System.Collections.Generic.List<int>();
-            foreach (var (endR, bright) in new[] { (EndRadius * 0.45f, 1f), (EndRadius, 0.35f) })
+            var vertices = new System.Collections.Generic.List<Vector3>();
+            var colors = new System.Collections.Generic.List<Color>();
+            var triangles = new System.Collections.Generic.List<int>();
+            foreach (var (endRadius, brightness) in new[] { (EndRadius * CoreRadiusFactor, CoreBrightness), (EndRadius, RimBrightness) })
             {
-                int baseIdx = verts.Count;
-                for (int r = 0; r <= Rings; r++)
+                int baseIndex = vertices.Count;
+                for (int ring = 0; ring <= Rings; ring++)
                 {
-                    float fraction = r / (float)Rings;
-                    float z = Length * fraction;
-                    float radius = Mathf.Lerp(LensRadius, endR, fraction);
-                    float fade = bright * Mathf.Pow(1f - fraction, 2.2f) * Mathf.Clamp01(fraction * 12f);   // not a solid disc at the lens
-                    for (int s = 0; s < Sides; s++)
+                    float fraction = ring / (float)Rings;
+                    float depth = Length * fraction;
+                    float radius = Mathf.Lerp(LensRadius, endRadius, fraction);
+                    float fade = brightness * Mathf.Pow(1f - fraction, FadePower) * Mathf.Clamp01(fraction * LensFadeInRings);   // not a solid disc at the lens
+                    for (int side = 0; side < Sides; side++)
                     {
-                        float firstValue = Mathf.PI * 2f * s / Sides;
-                        verts.Add(new Vector3(Mathf.Cos(firstValue) * radius, Mathf.Sin(firstValue) * radius, z));
-                        cols.Add(new Color(fade, fade, fade, fade));
+                        float angle = Mathf.PI * 2f * side / Sides;
+                        vertices.Add(new Vector3(Mathf.Cos(angle) * radius, Mathf.Sin(angle) * radius, depth));
+                        colors.Add(new Color(fade, fade, fade, fade));
                     }
                 }
-                for (int r = 0; r < Rings; r++)
-                    for (int s = 0; s < Sides; s++)
+                for (int ring = 0; ring < Rings; ring++)
+                    for (int side = 0; side < Sides; side++)
                     {
-                        int a0 = baseIdx + r * Sides + s, a1 = baseIdx + r * Sides + (s + 1) % Sides;
-                        int b0 = a0 + Sides, b1 = a1 + Sides;
+                        int lowerFirstIndex = baseIndex + ring * Sides + side, lowerSecondIndex = baseIndex + ring * Sides + (side + 1) % Sides;
+                        int upperFirstIndex = lowerFirstIndex + Sides, upperSecondIndex = lowerSecondIndex + Sides;
                         // both windings: the shaft is seen from inside and outside
-                        tris.AddRange(new[] { a0, b0, a1, a1, b0, b1, a0, a1, b0, a1, b1, b0 });
+                        triangles.AddRange(new[] { lowerFirstIndex, upperFirstIndex, lowerSecondIndex, lowerSecondIndex, upperFirstIndex, upperSecondIndex, lowerFirstIndex, lowerSecondIndex, upperFirstIndex, lowerSecondIndex, upperSecondIndex, upperFirstIndex });
                     }
             }
             var mesh = new Mesh { name = "SR_LampBeam" };
-            mesh.vertices = verts.ToArray();
-            mesh.colors = cols.ToArray();
-            mesh.triangles = tris.ToArray();
+            mesh.vertices = vertices.ToArray();
+            mesh.colors = colors.ToArray();
+            mesh.triangles = triangles.ToArray();
             mesh.RecalculateBounds();
             mesh.hideFlags |= HideFlags.DontUnloadUnusedAsset;
             return mesh;
@@ -61,13 +79,13 @@ namespace SteamRailway
             if (s_Mesh == null) s_Mesh = BuildMesh();
             var targetObject = new GameObject("Beam");
             targetObject.transform.SetParent(lamp, false);
-            targetObject.transform.localPosition = new Vector3(0f, 0f, 0.05f);
+            targetObject.transform.localPosition = new Vector3(0f, 0f, BeamOffsetInMeters);
             targetObject.AddComponent<MeshFilter>().sharedMesh = s_Mesh;
             var meshRenderer = targetObject.AddComponent<MeshRenderer>();
             var material = new Material(s_Shader) { name = "SR_LampBeam" };
             material.mainTexture = Texture2D.whiteTexture;
-            material.SetColor("_TintColor", Color.black);
-            material.renderQueue = 3000;
+            material.SetColor(TintColorPropertyName, Color.black);
+            material.renderQueue = AdditiveRenderQueue;
             meshRenderer.sharedMaterial = material;
             meshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             meshRenderer.receiveShadows = false;
@@ -77,30 +95,30 @@ namespace SteamRailway
 
         static float s_Dark, s_NextDark;
 
-        /// 0 by day .. 1 at night: a lamp's shaft is only seen in the dark (dusk 17-20 h, dawn 5-8 h).
+        /// 0 by day .. 1 at night: a lamp's shaft is only seen in the dark.
         public static float Darkness()
         {
             if (Time.time < s_NextDark) return s_Dark;
-            s_NextDark = Time.time + 2f;
+            s_NextDark = Time.time + DarknessRefreshSeconds;
             try
             {
                 var timeOfDay = Il2Cpp.GameManager.GetTimeOfDayComponent();
                 if (timeOfDay == null) return s_Dark = 1f;
-                float height = timeOfDay.GetNormalizedTime() * 24f;
-                float dusk = Mathf.InverseLerp(17f, 20f, height), dawn = Mathf.InverseLerp(8f, 5f, height);
+                float height = timeOfDay.GetNormalizedTime() * HoursPerDay;
+                float dusk = Mathf.InverseLerp(DuskStartHour, DuskEndHour, height), dawn = Mathf.InverseLerp(DawnStartHour, DawnEndHour, height);
                 s_Dark = Mathf.SmoothStep(0f, 1f, Mathf.Max(dusk, dawn));
             }
             catch { s_Dark = 1f; }
             return s_Dark;
         }
 
-        /// k = 0 (off) .. 1 (full).
+        /// `scale` is 0 (off) .. 1 (full).
         public static void Set(MeshRenderer beam, float scale)
         {
             if (beam == null) return;
             scale *= Darkness();
-            beam.enabled = scale > 0.01f;
-            if (beam.enabled) beam.sharedMaterial.SetColor("_TintColor", Tint * scale);
+            beam.enabled = scale > MinimumVisibleScale;
+            if (beam.enabled) beam.sharedMaterial.SetColor(TintColorPropertyName, Tint * scale);
         }
     }
 }

@@ -37,7 +37,7 @@ namespace SteamRailway.Patches
         private static void Prefix()
         {
             try { RailwayManager.WriteSave(); }
-            catch (System.Exception e) { SteamRailwayMod.Log.Error($"Saving railway state failed: {e}"); }
+            catch (System.Exception exception) { SteamRailwayMod.Log.Error($"Saving railway state failed: {exception}"); }
         }
     }
 
@@ -67,7 +67,7 @@ namespace SteamRailway.Patches
         {
             if (!RailwayManager.IsOurTrain(trainCar)) return true;
             try { RailwayManager.TrainHitTransition(trainCar, __instance); }
-            catch (System.Exception e) { SteamRailwayMod.Log.Warning($"Train at a transition: {e.Message}"); }
+            catch (System.Exception exception) { SteamRailwayMod.Log.Warning($"Train at a transition: {exception.Message}"); }
             return false;
         }
     }
