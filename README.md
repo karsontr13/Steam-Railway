@@ -87,6 +87,12 @@ The difficulty is fixed when a game is started and stays with that save.
   where they lay. Items you take or put into a container stay yours.
 - The crew speeders can cross regions too; their doors work after the crossing.
 
+### Wildlife
+
+- Animals are afraid of the train and run away whether it is stationary or moving.
+- The horn scares all animals within a 140-meter radius.
+- Animals die if they are hit by the train.
+
 ### Repairing the bridge
 
 In Hard mode a construction board stands at the end of the broken bridge. Click it to open a workbench-style menu that
