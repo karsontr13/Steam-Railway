@@ -28,11 +28,14 @@
     <Reference Include="$(TLD)\MelonLoader\net6\Il2CppInterop.Common.dll" Private="false" />
     <Reference Include="$(TLD)\MelonLoader\Il2CppAssemblies\*.dll" Private="false" />
     <Reference Include="$(TLD)\Mods\ModData.dll" Private="false" />
+    <!-- Optional at run time (MelonOptionalDependencies): the in-game settings page. -->
+    <Reference Include="$(TLD)\Mods\ModSettings.dll" Private="false" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="Assets\steamrailway.bundle" LogicalName="steamrailway.bundle" />
     <EmbeddedResource Include="Assets\SOUND_CREDITS.txt" LogicalName="SOUND_CREDITS.txt" />
+    <EmbeddedResource Include="Assets\Dynamite\SteamRailwayDynamite.modcomponent" LogicalName="Dynamite/SteamRailwayDynamite.modcomponent" Condition="Exists('Assets\Dynamite\SteamRailwayDynamite.modcomponent')" />
     <EmbeddedResource Include="Assets\Data\**\*" LogicalName="Data/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
