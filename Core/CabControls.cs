@@ -211,6 +211,7 @@ namespace SteamRailway
         }
 
         static float s_DampUntil;
+        const float MinimumKeptHoursToMention = 0.05f;
 
         /// Two clicks within a few seconds put the fire out; one stray click must not waste a good fire.
         static void Damp(SteamSimulation simulation)
@@ -223,10 +224,12 @@ namespace SteamRailway
                 return;
             }
             s_DampUntil = 0f;
-            simulation.ExtinguishFire();
+            float keptHours = simulation.PutOutFire();
             SynthSounds.PlayLever(simulation.Train, DamperLeverPitch, DamperLeverVolume);
             TrainSounds.PlayFor(TrainSounds.SteamHiss, TrainSounds.Cab(simulation.Train), DamperHissVolume);
-            Message(Localizer.Translate("Sürgü kapatıldı: ocak söndü.", "The damper is shut: the fire is out."));
+            Message(keptHours >= MinimumKeptHoursToMention
+                ? Localizer.Translate($"Sürgü kapatıldı: ocak söndü ({keptHours:0.0} saatlik kömür saklandı).", $"The damper is shut: the fire is out ({keptHours:0.0} h of coal kept).")
+                : Localizer.Translate("Sürgü kapatıldı: ocak söndü.", "The damper is shut: the fire is out."));
         }
 
         internal static void Message(string text) => HUDMessage.AddMessage(text, false, false);

@@ -55,6 +55,10 @@ namespace SteamRailway
         [ModSettings.Choice(new string[] { "Easy", "Hard" })]
         public DifficultyChoice Difficulty = DifficultyChoice.Easy;
 
+        [ModSettings.Name("Ear ringing after a blast")]
+        [ModSettings.Description("A blast of the blasting charge close by makes the ears ring. Turn off if the sound bothers you.")]
+        public bool Tinnitus = true;
+
         [ModSettings.Section("Map making")]
         [ModSettings.Name("Editors (F11)")]
         [ModSettings.Description("F11 goes round the object, track, terrain and obstacle editors. Edits are kept in Mods/SteamRailway. Leave off for normal play.")]
@@ -74,6 +78,7 @@ namespace SteamRailway
             Enabled = SteamRailwayMod.Enabled;
             Realism = SteamRailwayMod.RealismMode == SteamRailway.Realism.Simple ? RealismChoice.Simple : RealismChoice.Medium;
             Difficulty = SteamRailwayMod.DifficultySetting == Obstacles.HardName ? DifficultyChoice.Hard : DifficultyChoice.Easy;
+            Tinnitus = SteamRailwayMod.TinnitusEnabled;
             Editors = SteamRailwayMod.ObjectEditorEnabled;
             DeveloperTools = SteamRailwayMod.DeveloperToolsEnabled;
             VerboseLogging = SteamRailwayMod.Verbose;
@@ -83,7 +88,7 @@ namespace SteamRailway
         protected override void OnConfirm()
         {
             SteamRailwayMod.ApplySettings(Enabled, Realism == RealismChoice.Simple ? SteamRailwayMod.SimpleRealismName : SteamRailwayMod.MediumRealismName,
-                Difficulty == DifficultyChoice.Hard ? Obstacles.HardName : Obstacles.EasyName, Editors, DeveloperTools, VerboseLogging);
+                Difficulty == DifficultyChoice.Hard ? Obstacles.HardName : Obstacles.EasyName, Editors, DeveloperTools, VerboseLogging, Tinnitus);
             MelonPreferences.Save();
             SteamRailwayMod.Log.Msg("Saved from the settings page.");
         }

@@ -138,7 +138,7 @@ namespace SteamRailway
             var source = targetObject.GetComponent<AudioSource>() ?? Source(targetObject, false, CabSourceMinimumDistanceInMeters, CabSourceMaximumDistanceInMeters);
             source.volume = 1f;
             source.pitch = pitch * Random.Range(CabPitchSpreadMinimum, CabPitchSpreadMaximum);
-            source.PlayOneShot(clip, volume);
+            source.PlayOneShot(clip, volume * GameVolume.Scale);
         }
 
         static readonly string[] s_Levers = { "Lever1", "Lever2", "Lever3" };

@@ -671,15 +671,17 @@ namespace SteamRailway
             float distance = Vector3.Distance(player.transform.position, point);
             if (distance > HearRadiusInMeters) return;
             HurtByBlast(distance);
-            if (distance <= TinnitusRadiusInMeters) WorldSounds.PlayTinnitus(1f - distance / TinnitusRadiusInMeters);
+            if (distance <= TinnitusRadiusInMeters && SteamRailwayMod.TinnitusEnabled) WorldSounds.PlayTinnitus(1f - distance / TinnitusRadiusInMeters);
             if (distance <= BurnsRadiusInMeters)
             {
                 var burns = GameManager.GetBurnsComponent();
                 if (burns != null && !burns.HasBurns())
                     burns.BurnsStart(BurnsCause, true, false, AfflictionOptions.PlayFX | AfflictionOptions.DisplayIcon);
-                CabControls.Message(Localizer.Translate("PATLAMA! Çok yakındaydın: yandın ve kulakların çınlıyor.", "BLAST! You stood too close: you are burned and your ears ring."));
+                CabControls.Message(SteamRailwayMod.TinnitusEnabled
+                    ? Localizer.Translate("PATLAMA! Çok yakındaydın: yandın ve kulakların çınlıyor.", "BLAST! You stood too close: you are burned and your ears ring.")
+                    : Localizer.Translate("PATLAMA! Çok yakındaydın: yandın.", "BLAST! You stood too close: you are burned."));
             }
-            else if (distance <= TinnitusRadiusInMeters)
+            else if (distance <= TinnitusRadiusInMeters && SteamRailwayMod.TinnitusEnabled)
                 CabControls.Message(Localizer.Translate("PATLAMA! Kulakların çınlıyor.", "BLAST! Your ears ring."));
             else CabControls.Message(Localizer.Translate("PATLAMA! Kaya yığını dağıldı.", "BLAST! The rockfall is blown apart."));
         }

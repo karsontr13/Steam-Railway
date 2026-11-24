@@ -446,6 +446,32 @@ namespace SteamRailway
             return forward.sqrMagnitude > MinimumForwardSquaredMagnitude ? Quaternion.LookRotation(forward, upDirection) : Quaternion.identity;
         }
 
+        /// A few of our instances are read back: while they are still as written the game has not touched the buffers, and
+        /// writing again would only make the graphics driver warn about overlapping uploads.
+        static bool SamplesIntact()
+        {
+            int total = s_InstanceMatches.Count;
+            if (total == 0) return true;
+            if (s_OneMatrixArray == null) { s_OneMatrixArray = new Il2CppStructArray<Matrix4x4>(1); s_OneMatrixIl2CppArray = new Il2CppSystem.Array(s_OneMatrixArray.Pointer); }
+            int samples = Mathf.Min(SampleCountPerCheck, total);
+            for (int sample = 0; sample < samples; sample++)
+            {
+                var instanceMatch = s_InstanceMatches[(s_SampleCursor + sample * Mathf.Max(1, total / samples)) % total];
+                if (instanceMatch.InstancedMatrices == null) continue;
+                instanceMatch.InstancedMatrices.InternalGetData(s_OneMatrixIl2CppArray, 0, instanceMatch.Index, 1, MatrixSizeInBytes);
+                var current = s_OneMatrixArray[0];
+                if (!instanceMatch.OwnerTarget.Moved) { if (current.m33 != 0f) return false; continue; }
+                var expected = instanceMatch.OwnerTarget.Delta * instanceMatch.OriginalMatrix;
+                if (Mathf.Abs(current.m03 - expected.m03) > SampleToleranceInMeters || Mathf.Abs(current.m23 - expected.m23) > SampleToleranceInMeters) return false;
+            }
+            s_SampleCursor = (s_SampleCursor + 1) % total;
+            return true;
+        }
+
+        static int s_SampleCursor;
+        const int SampleCountPerCheck = 8;
+        const float SampleToleranceInMeters = 0.01f;
+
         public static void Update()
         {
             if (s_Targets.Count == 0) return;
@@ -476,7 +502,7 @@ namespace SteamRailway
                 if (Time.time >= s_NextWrite)
                 {
                     s_NextWrite = Time.time + WriteIntervalInSeconds;
-                    WriteAll();
+                    if (!SamplesIntact()) WriteAll();
                 }
             }
             catch { }

@@ -47,6 +47,8 @@ namespace SteamRailway
         public string StrayCoupledTo { get; set; }
         /// When it left (UTC ticks): wagons that left one after another come in in the same order.
         public long StrayDepartedTicks { get; set; }
+        /// When it left, on the game's clock (hours played): the time since then is rolled out when it comes in.
+        public double StrayDepartedHours { get; set; }
     }
 
     /// An object lying on a wagon and its place relative to the wagon's root.
@@ -939,6 +941,7 @@ namespace SteamRailway
             public List<CabItemState> Cargo;
             public string CoupledToKey;
             public long DepartedTicks;
+            public double DepartedHours;
         }
 
         /// A wagon that rolled in, with the wagon it was coupled to (to couple them again once all have come in).
@@ -949,6 +952,7 @@ namespace SteamRailway
             public string CoupledToKey;
             public Portal Portal;
             public int Inward;
+            public double DepartedHours;
             public float Depth => Inward * (Wagon.Position - Portal.SplineMeters);
         }
 
@@ -1013,6 +1017,7 @@ namespace SteamRailway
                 Wagon = wagon,
                 CoupledToKey = coupledToKey,
                 DepartedTicks = System.DateTime.UtcNow.Ticks,
+                DepartedHours = GameManager.GetTimeOfDayComponent().GetHoursPlayedNotPaused(),
                 FromScene = s_Scene,
                 Destination = destinationScene,
                 Speed = Mathf.Abs(wagon.Velocity),
@@ -1130,6 +1135,7 @@ namespace SteamRailway
                     StrayCargo = departure.Cargo != null && departure.Cargo.Count > 0 ? departure.Cargo : null,
                     StrayCoupledTo = departure.CoupledToKey,
                     StrayDepartedTicks = departure.DepartedTicks,
+                    StrayDepartedHours = departure.DepartedHours,
                 };
             }
             s_StrayDepartures.Clear();
@@ -1177,16 +1183,17 @@ namespace SteamRailway
                 wagon.Flipped = flipped;
                 wagon.Position = ClearEntryPosition(wagon, portal, inward, trains);
                 wagon.Velocity = inward * state.StraySpeed;
-                state.RouteId = portal.Track.Identifier;
+                state.RouteId = wagon.Track.Identifier;
                 state.SplinePos = wagon.Position;
-                state.Flipped = flipped;
+                state.Flipped = wagon.Flipped;
                 Pose(wagon);
                 UnpackCargo(wagon, state.StrayCargo);
-                s_StrayArrivals.Add(new StrayArrival { Wagon = wagon, State = state, CoupledToKey = state.StrayCoupledTo, Portal = portal, Inward = inward });
+                s_StrayArrivals.Add(new StrayArrival { Wagon = wagon, State = state, CoupledToKey = state.StrayCoupledTo, Portal = portal, Inward = inward, DepartedHours = state.StrayDepartedHours });
                 ClearStray(state);
                 SteamRailwayMod.Log.Msg($"Wagon {wagon.Name} rolled into {scene} from the transition to {portal.DestinationScene} at {state.StraySpeed:F1} m/s.");
             }
             RecoupleStrayArrivals();
+            RollStrayArrivals(trains);
             s_StrayArrivals.Clear();
             s_StrayHomecomers.Clear();
         }
@@ -1199,6 +1206,35 @@ namespace SteamRailway
             state.StrayCargo = null;
             state.StrayCoupledTo = null;
             state.StrayDepartedTicks = 0;
+            state.StrayDepartedHours = 0.0;
+        }
+
+        // The time that passed since a wagon rolled out is rolled out for it on arrival: where it would have got to.
+        const float HoursPerDay = 24f;
+        const float MinimumRolledStepInSeconds = 0.25f;
+        const int MaximumRolledSteps = 20000;
+
+        /// The wagon rolls on for the game time since it left (the same rolling as in the region: slope, resistance, points,
+        /// the line's ends); it stops where it comes to rest, or at a transition it would roll out through.
+        static void RollSinceDeparture(RailWagon wagon, double departedHours, List<LiveTrain> trains)
+        {
+            if (departedHours <= 0.0 || wagon.Track == null) return;
+            var timeOfDay = GameManager.GetTimeOfDayComponent();
+            double elapsedHours = timeOfDay.GetHoursPlayedNotPaused() - departedHours;
+            float elapsedSeconds = (float)(elapsedHours * timeOfDay.GetDayLengthSecondsUnscaled() / HoursPerDay);
+            if (elapsedSeconds < MinimumRolledStepInSeconds) return;
+            float step = Mathf.Max(MinimumRolledStepInSeconds, elapsedSeconds / MaximumRolledSteps);
+            float rolled = 0f;
+            while (rolled < elapsedSeconds)
+            {
+                float deltaTime = Mathf.Min(step, elapsedSeconds - rolled);
+                rolled += deltaTime;
+                Roll(wagon, deltaTime);
+                if (wagon.Velocity == 0f || StopAtObstacle(wagon, trains)) break;
+                float lead = wagon.Velocity > 0f ? wagon.Position + wagon.ReachTowardsEnd : wagon.Position - wagon.ReachTowardsStart;
+                if (RailwayManager.StrayPortalReached(wagon.Track, lead, wagon.Velocity) != null) break;
+            }
+            SteamRailwayMod.Debug($"Wagon {wagon.Name} rolled on for {rolled:F0} s since it left: now at {wagon.Position:F1} m of {wagon.Track.Identifier}.");
         }
 
         /// Wagons that were coupled when they left are coupled again: from the one furthest in outwards, each closes up to
@@ -1223,13 +1259,77 @@ namespace SteamRailway
                     var inner = s_StrayArrivals[innerIndex];
                     bool outerHangs = outer.Wagon.CoupledToWagon == inner.Wagon;
                     if (!outerHangs && inner.Wagon.CoupledToWagon != outer.Wagon) continue;
-                    CloseUp(outer, inner, outerHangs);
+                    CloseUp(outer, inner, outerHangs, false);
                     break;
                 }
             }
         }
 
-        static void CloseUp(StrayArrival outer, StrayArrival inner, bool outerHangs)
+        /// The arrived wagons roll on for the time since they left, furthest in first; each stops against what is in its
+        /// way, so they end up in order and never overlap. A coupled wagon closes up to its partner once it has settled.
+        static void RollStrayArrivals(List<LiveTrain> trains)
+        {
+            for (int index = 0; index < s_StrayArrivals.Count; index++)   // innermost first
+            {
+                var arrival = s_StrayArrivals[index];
+                RollSinceDeparture(arrival.Wagon, arrival.DepartedHours, trains);
+                for (int innerIndex = index - 1; innerIndex >= 0; innerIndex--)
+                {
+                    var inner = s_StrayArrivals[innerIndex];
+                    bool outerHangs = arrival.Wagon.CoupledToWagon == inner.Wagon;
+                    if (!outerHangs && inner.Wagon.CoupledToWagon != arrival.Wagon) continue;
+                    if (inner.Wagon.Track == arrival.Wagon.Track && inner.Wagon.Flipped == arrival.Wagon.Flipped) CloseUp(arrival, inner, outerHangs, true);
+                    break;
+                }
+                RecordPlace(arrival);
+            }
+        }
+
+        /// Stops the wagon against the nearest wagon or locomotive ahead of it on its line (touching it); true if it did.
+        static bool StopAtObstacle(RailWagon wagon, List<LiveTrain> trains)
+        {
+            if (wagon.Velocity == 0f || wagon.Track == null) return false;
+            bool forward = wagon.Velocity > 0f;
+            float limit = forward ? float.MaxValue : float.MinValue;   // the nearest face of what is in the way
+            bool found = false;
+            for (int index = 0; index < s_Wagons.Count; index++)
+            {
+                var other = s_Wagons[index];
+                if (other == wagon || other.Track != wagon.Track || other.Root == null) continue;
+                if (forward ? other.Position <= wagon.Position : other.Position >= wagon.Position) continue;
+                float face = forward ? other.Position - other.ReachTowardsStart : other.Position + other.ReachTowardsEnd;
+                if (forward ? face < limit : face > limit) { limit = face; found = true; }
+            }
+            for (int index = 0; index < trains.Count; index++)
+            {
+                var liveTrain = trains[index];
+                if (liveTrain.Train == null || liveTrain.Simulation == null || liveTrain.RouteId != wagon.Track.Identifier) continue;
+                TrainEnds(liveTrain, wagon.Track, out float trainPosition, out float endForward, out float endBackward);
+                if (forward ? trainPosition <= wagon.Position : trainPosition >= wagon.Position) continue;
+                float face = forward ? endBackward : endForward;
+                if (forward ? face < limit : face > limit) { limit = face; found = true; }
+            }
+            if (!found) return false;
+            float front = forward ? wagon.Position + wagon.ReachTowardsEnd : wagon.Position - wagon.ReachTowardsStart;
+            if (forward ? front < limit : front > limit) return false;
+            wagon.Position = forward ? limit - wagon.ReachTowardsEnd : limit + wagon.ReachTowardsStart;
+            wagon.Velocity = 0f;
+            wagon.Moved = true;
+            return true;
+        }
+
+        /// The save data follows the wagon to where it rolled (another line if it went over points).
+        static void RecordPlace(StrayArrival arrival)
+        {
+            var wagon = arrival.Wagon;
+            if (wagon.Track == null) return;
+            arrival.State.RouteId = wagon.Track.Identifier;
+            arrival.State.SplinePos = wagon.Position;
+            arrival.State.Flipped = wagon.Flipped;
+            Pose(wagon);
+        }
+
+        static void CloseUp(StrayArrival outer, StrayArrival inner, bool outerHangs, bool force)
         {
             var hanger = outerHangs ? outer.Wagon : inner.Wagon;
             var holder = outerHangs ? inner.Wagon : outer.Wagon;
@@ -1237,7 +1337,7 @@ namespace SteamRailway
             bool hangerAhead = outerHangs ? outer.Inward < 0 : outer.Inward > 0;
             float separation = CoupledSeparation(hanger, holder, hangerAhead, out float gap);
             float wanted = inner.Wagon.Position - outer.Inward * separation;
-            if (Mathf.Abs(wanted - outer.Wagon.Position) > StrayRecouplingReachInMeters) return;
+            if (!force && Mathf.Abs(wanted - outer.Wagon.Position) > StrayRecouplingReachInMeters) return;
             var wagon = outer.Wagon;
             wagon.Position = Mathf.Clamp(wanted, LineEndMarginInMeters, wagon.Track.Spline.Length - LineEndMarginInMeters);
             wagon.Velocity = inner.Wagon.Velocity;
@@ -1423,7 +1523,7 @@ namespace SteamRailway
                 wagon.RumbleSource.clip = SynthSounds.Rumble;
                 wagon.JointSource = SynthSounds.Source(wagon.Root.gameObject, false, RollingSoundMinimumDistance, RollingSoundMaximumDistance);
             }
-            wagon.RumbleSource.volume = Mathf.Min(RumbleMaximumVolume, speed * RumbleVolumePerMeterPerSecond);
+            wagon.RumbleSource.volume = Mathf.Min(RumbleMaximumVolume, speed * RumbleVolumePerMeterPerSecond) * GameVolume.Scale;
             wagon.RumbleSource.pitch = RumbleBasePitch + RumblePitchPerMeterPerSecond * speed;
             if (!wagon.RumbleSource.isPlaying) wagon.RumbleSource.Play();
             wagon.JointDistance += speed * deltaTime;
@@ -1431,7 +1531,7 @@ namespace SteamRailway
             wagon.JointDistance -= JointSpacingInMeters;
             wagon.JointSource.volume = 1f;
             wagon.JointSource.pitch = Random.Range(JointPitchMinimum, JointPitchMaximum);
-            wagon.JointSource.PlayOneShot(WorldSounds.WagonJoint, JointVolume);
+            wagon.JointSource.PlayOneShot(WorldSounds.WagonJoint, JointVolume * GameVolume.Scale);
         }
 
         /// A free wagon: rolling resistance and the slope; the line's ends stop it; at the points it follows the switch.
@@ -1923,33 +2023,76 @@ namespace SteamRailway
 
         // ------------------------------------------------------------------ knocks
 
-        /// The locomotive's buffers against a wagon's ends, on the same line (its own coupled wagons excepted).
+        /// A wagon on another line standing this close sideways to a line is in the way of what runs on it: the first
+        /// metres of a branch lie alongside the main line, and a wagon parked there fouls it.
+        const float FoulClearanceInMeters = 3f;
+        const float FoulSearchDistanceInMeters = 40f;
+
+        /// Where a wagon of another line stands as seen along `track` (spline metres), and whether its line runs the same
+        /// way (+1) or the opposite way (-1); false when it is not in the way of `track`.
+        static bool FoulFrame(RailWagon wagon, BuiltTrack track, Vector3 near, out float position, out int sign)
+        {
+            position = wagon.Position;
+            sign = 1;
+            if (wagon.Track == track) return true;
+            if (wagon.Root == null || track.Path == null || track.Spline == null || wagon.Track.Path == null) return false;
+            var pivot = wagon.Root.position;
+            if ((pivot - near).sqrMagnitude > FoulSearchDistanceInMeters * FoulSearchDistanceInMeters) return false;
+            float arc = track.Path.NearestDistance(pivot, out float sideways);
+            if (sideways > FoulClearanceInMeters) return false;
+            position = arc * track.Spline.Length / Mathf.Max(MinimumPathLengthInMeters, track.Path.Length);
+            track.Path.Sample(arc, out _, out var trackTangent);
+            float ownArc = wagon.Position * wagon.Track.Path.Length / Mathf.Max(MinimumPathLengthInMeters, wagon.Track.Spline.Length);
+            wagon.Track.Path.Sample(ownArc, out _, out var ownTangent);
+            sign = Vector3.Dot(trackTangent, ownTangent) >= 0f ? 1 : -1;
+            return true;
+        }
+
+        /// The locomotive's buffers against a wagon's ends, on the same line or on a line alongside it (its own coupled
+        /// wagons excepted).
         static void TrainContact(LiveTrain liveTrain, RailWagon wagon, List<LiveTrain> trains)
         {
-            if (liveTrain.Train == null || liveTrain.Simulation == null || wagon.Track == null || liveTrain.RouteId != wagon.Track.Identifier) return;
+            if (liveTrain.Train == null || liveTrain.Simulation == null || wagon.Track == null) return;
             if (ConsistTrain(wagon, trains) == liveTrain) return;
+            var track = wagon.Track;
+            float wagonPosition = wagon.Position;
+            int sign = 1;
+            if (liveTrain.RouteId != track.Identifier)
+            {
+                track = RailwayManager.FindTrack(liveTrain.RouteId);
+                if (track == null || !FoulFrame(wagon, track, liveTrain.Train.transform.position, out wagonPosition, out sign)) return;
+            }
             var simulation = liveTrain.Simulation;
-            TrainEnds(liveTrain, wagon.Track, out float trainPosition, out float trainEndForward, out float trainEndBackward);
+            TrainEnds(liveTrain, track, out float trainPosition, out float trainEndForward, out float trainEndBackward);
             float trainVelocity = simulation.LineVelocity;
-            bool wagonAhead = wagon.Position >= trainPosition;
-            float gap = wagonAhead ? (wagon.Position - wagon.ReachTowardsStart) - trainEndForward
-                                   : trainEndBackward - (wagon.Position + wagon.ReachTowardsEnd);
+            // the wagon in the locomotive's line frame
+            float reachStart = sign > 0 ? wagon.ReachTowardsStart : wagon.ReachTowardsEnd;
+            float reachEnd = sign > 0 ? wagon.ReachTowardsEnd : wagon.ReachTowardsStart;
+            float wagonVelocity = wagon.Velocity * sign;
+            bool wagonAhead = wagonPosition >= trainPosition;
+            float gap = wagonAhead ? (wagonPosition - reachStart) - trainEndForward
+                                   : trainEndBackward - (wagonPosition + reachEnd);
             if (gap >= 0f) return;
-            float closing = wagonAhead ? trainVelocity - wagon.Velocity : wagon.Velocity - trainVelocity;
-            if (closing <= 0f) return;
+            float closing = wagonAhead ? trainVelocity - wagonVelocity : wagonVelocity - trainVelocity;
+            if (closing <= 0f)
+            {
+                // on top of each other without closing in (the train came in where a wagon stood): the free wagon moves clear
+                if (gap < -OverlapToleranceInMeters && ConsistTrain(wagon, trains) == null) MoveClear(wagon, (wagonAhead ? -gap : gap) * sign);
+                return;
+            }
 
             float trainMass = ConsistMass(liveTrain, trains);
-            float behindVelocity = wagonAhead ? trainVelocity : wagon.Velocity;
-            float aheadVelocity = wagonAhead ? wagon.Velocity : trainVelocity;
+            float behindVelocity = wagonAhead ? trainVelocity : wagonVelocity;
+            float aheadVelocity = wagonAhead ? wagonVelocity : trainVelocity;
             float behindMass = wagonAhead ? trainMass : wagon.MassInKilograms;
             float aheadMass = wagonAhead ? wagon.MassInKilograms : trainMass;
             Collide(behindMass, aheadMass, ref behindVelocity, ref aheadVelocity, closing);
             float newTrainVelocity = wagonAhead ? behindVelocity : aheadVelocity;
-            wagon.Velocity = wagonAhead ? aheadVelocity : behindVelocity;
+            wagon.Velocity = (wagonAhead ? aheadVelocity : behindVelocity) * sign;
 
             // the wagon is pushed clear of the buffers; against the end of its line it cannot give way: the train stops
             float length = wagon.Track.Spline.Length;
-            float pushed = wagon.Position + (wagonAhead ? -gap : gap);
+            float pushed = wagon.Position + (wagonAhead ? -gap : gap) * sign;
             if (pushed <= LineEndMarginInMeters || pushed >= length - LineEndMarginInMeters)
             {
                 pushed = Mathf.Clamp(pushed, LineEndMarginInMeters, length - LineEndMarginInMeters);
@@ -1963,43 +2106,127 @@ namespace SteamRailway
             Bump(wagon, closing);
         }
 
-        /// Two wagons on one line. A wagon in a consist brings the whole train's mass, and the train takes the change.
+        /// Two wagons on one line, or on lines alongside each other (a switch's first metres). A wagon in a consist brings
+        /// the whole train's mass, and the train takes the change.
         static void WagonContact(RailWagon first, RailWagon second, List<LiveTrain> trains)
         {
-            if (first.Track == null || second.Track == null || first.Track != second.Track) return;
+            if (first.Track == null || second.Track == null) return;
             var firstTrain = ConsistTrain(first, trains);
             var secondTrain = ConsistTrain(second, trains);
             if (firstTrain != null && secondTrain != null) return;   // the same consist, or two trains: their buffers handle it
-            var behind = first.Position <= second.Position ? first : second;
-            var ahead = behind == first ? second : first;
-            float gap = (ahead.Position - ahead.ReachTowardsStart) - (behind.Position + behind.ReachTowardsEnd);
+
+            // everything is worked out along the first wagon's line; `sign` turns the second wagon's own line into it
+            float secondPosition = second.Position;
+            int sign = 1;
+            if (first.Track != second.Track)
+            {
+                if (first.Root == null || second.Root == null) return;
+                if (!FoulFrame(second, first.Track, first.Root.position, out secondPosition, out sign))
+                {
+                    // past a line's end the nearest point is its end: seen from the other line it may still be in the way
+                    if (!FoulFrame(first, second.Track, second.Root.position, out secondPosition, out sign)) return;
+                    (first, second) = (second, first);
+                    (firstTrain, secondTrain) = (secondTrain, firstTrain);
+                }
+            }
+            float firstPosition = first.Position;
+            float secondReachStart = sign > 0 ? second.ReachTowardsStart : second.ReachTowardsEnd;
+            float secondReachEnd = sign > 0 ? second.ReachTowardsEnd : second.ReachTowardsStart;
+
+            bool firstBehind = firstPosition <= secondPosition;
+            var behind = firstBehind ? first : second;
+            var ahead = firstBehind ? second : first;
+            int behindSign = firstBehind ? 1 : sign;
+            int aheadSign = firstBehind ? sign : 1;
+            float behindPosition = firstBehind ? firstPosition : secondPosition;
+            float aheadPosition = firstBehind ? secondPosition : firstPosition;
+            float behindReach = firstBehind ? first.ReachTowardsEnd : secondReachEnd;
+            float aheadReach = firstBehind ? secondReachStart : first.ReachTowardsStart;
+            float gap = (aheadPosition - aheadReach) - (behindPosition + behindReach);
             if (gap >= 0f) return;
-            float closing = behind.Velocity - ahead.Velocity;
-            if (closing <= 0f) return;
-            var behindTrain = behind == first ? firstTrain : secondTrain;
-            var aheadTrain = behind == first ? secondTrain : firstTrain;
+            float behindVelocity = behind.Velocity * behindSign, aheadVelocity = ahead.Velocity * aheadSign;
+            float closing = behindVelocity - aheadVelocity;
+            var behindTrain = firstBehind ? firstTrain : secondTrain;
+            var aheadTrain = firstBehind ? secondTrain : firstTrain;
+            if (closing <= 0f)
+            {
+                // on top of each other without closing in (a wagon rolled in where another stood): the free one moves clear
+                if (gap < -OverlapToleranceInMeters && behind.CoupledToWagon != ahead && ahead.CoupledToWagon != behind)
+                {
+                    if (behindTrain == null && aheadTrain == null)
+                    {
+                        float total = behind.MassInKilograms + ahead.MassInKilograms;
+                        MoveClear(behind, gap * ahead.MassInKilograms / total * behindSign);
+                        MoveClear(ahead, -gap * behind.MassInKilograms / total * aheadSign);
+                    }
+                    else if (behindTrain == null) MoveClear(behind, gap * behindSign);
+                    else if (aheadTrain == null) MoveClear(ahead, -gap * aheadSign);
+                }
+                return;
+            }
             float behindMass = behindTrain != null ? ConsistMass(behindTrain, trains) : behind.MassInKilograms;
             float aheadMass = aheadTrain != null ? ConsistMass(aheadTrain, trains) : ahead.MassInKilograms;
-            float behindVelocity = behind.Velocity, aheadVelocity = ahead.Velocity;
             Collide(behindMass, aheadMass, ref behindVelocity, ref aheadVelocity, closing);
-            behind.Velocity = behindVelocity;
-            ahead.Velocity = aheadVelocity;
+            behind.Velocity = behindVelocity * behindSign;
+            ahead.Velocity = aheadVelocity * aheadSign;
             // a coupled wagon's speed belongs to its engine (wagon line velocity = ConsistSign × engine velocity)
-            if (behindTrain != null) behindTrain.Simulation.RestoreMotion(behindVelocity * behind.ConsistSign);
-            if (aheadTrain != null) aheadTrain.Simulation.RestoreMotion(aheadVelocity * ahead.ConsistSign);
+            if (behindTrain != null) behindTrain.Simulation.RestoreMotion(behind.Velocity * behind.ConsistSign);
+            if (aheadTrain != null) aheadTrain.Simulation.RestoreMotion(ahead.Velocity * ahead.ConsistSign);
             // the free wagon gives way (a consist is held by its links)
             if (behindTrain == null && aheadTrain == null)
             {
                 float total = behind.MassInKilograms + ahead.MassInKilograms;
-                behind.Position += gap * ahead.MassInKilograms / total;
-                ahead.Position -= gap * behind.MassInKilograms / total;
+                behind.Position += gap * ahead.MassInKilograms / total * behindSign;
+                ahead.Position -= gap * behind.MassInKilograms / total * aheadSign;
             }
-            else if (behindTrain == null) behind.Position += gap;
-            else ahead.Position -= gap;
+            else if (behindTrain == null) behind.Position += gap * behindSign;
+            else ahead.Position -= gap * aheadSign;
             behind.Moved = ahead.Moved = true;
             EnsureKinematicBody(behind);
             EnsureKinematicBody(ahead);
             Bump(ahead, closing);
+        }
+
+        /// Wagons standing this far into each other (or into a locomotive) are moved apart; less is the buffers' own play.
+        const float OverlapToleranceInMeters = 0.5f;
+        static readonly List<RailWagon> s_ClearGroup = new List<RailWagon>();
+
+        /// A free wagon, with the wagons coupled to each other around it, moves along its line by `distance` (signed, spline
+        /// metres), as far as the line allows.
+        static void MoveClear(RailWagon wagon, float distance)
+        {
+            if (wagon.Track == null) return;
+            s_ClearGroup.Clear();
+            s_ClearGroup.Add(wagon);
+            for (int round = 0; round < MaximumChainLength; round++)
+            {
+                bool grew = false;
+                for (int index = 0; index < s_Wagons.Count; index++)
+                {
+                    var other = s_Wagons[index];
+                    if (other.Track != wagon.Track || s_ClearGroup.Contains(other)) continue;
+                    bool linked = other.CoupledToWagon != null && s_ClearGroup.Contains(other.CoupledToWagon);
+                    for (int member = 0; member < s_ClearGroup.Count && !linked; member++) linked = s_ClearGroup[member].CoupledToWagon == other;
+                    if (!linked) continue;
+                    s_ClearGroup.Add(other);
+                    grew = true;
+                }
+                if (!grew) break;
+            }
+            float length = wagon.Track.Spline.Length;
+            for (int member = 0; member < s_ClearGroup.Count; member++)
+            {
+                float position = s_ClearGroup[member].Position;
+                distance = distance > 0f ? Mathf.Min(distance, length - LineEndMarginInMeters - position) : Mathf.Max(distance, LineEndMarginInMeters - position);
+            }
+            if (Mathf.Abs(distance) < MinimumAdvanceInMeters) return;
+            for (int member = 0; member < s_ClearGroup.Count; member++)
+            {
+                var moved = s_ClearGroup[member];
+                moved.Position += distance;
+                moved.Moved = true;
+                EnsureKinematicBody(moved);
+            }
         }
 
         /// Momentum shared by mass along the line: slow pushes move together, harder knocks bounce a little.

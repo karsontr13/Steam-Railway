@@ -326,6 +326,9 @@ namespace SteamRailway
 
         static bool HasModel => s_Model != null;
 
+        const float CabinRearMarginInMeters = 0.3f;
+        const float CabinRearMarginCentreShare = 0.5f;      // the box shrinks from its rear edge only: its centre moves half the margin forward
+
         static void BuildPlaceholderBody(Transform rootTransform, Material material)
         {
             Il2CppHelpers.Cube(rootTransform, "Body", PlaceholderBodyPosition, PlaceholderBodySize, material, true);
@@ -346,7 +349,11 @@ namespace SteamRailway
             sway.m_SwayPeriod = CameraSwayPeriodInSeconds; sway.m_SwayHalfAngle = CameraSwayHalfAngleInDegrees; sway.m_SwayMultiplier = CameraSwayMultiplier; sway.m_Direction = Il2CppHelpers.CreateVector(0, 0, 1);
 
             var cabin = Il2CppHelpers.Child(rootTransform, "CabinLimits", floor).AddComponent<BoxCollider>();
-            cabin.size = TrainConfig.CabinSize;
+            // the limits hold the player's feet, but the player's body reaches about this far further: the rear edge is
+            // taken in so that the view never ends up inside the rear wall (the front and the sides stay where they were)
+            var walkable = TrainConfig.CabinSize;
+            cabin.size = new Vector3(walkable.x, walkable.y, walkable.z - CabinRearMarginInMeters);
+            cabin.center = new Vector3(0f, 0f, CabinRearMarginInMeters * CabinRearMarginCentreShare);
             cabin.isTrigger = true;
 
             train.m_CameraDummy = dummy.transform;

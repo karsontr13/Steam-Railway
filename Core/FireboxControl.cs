@@ -16,6 +16,7 @@ namespace SteamRailway
         const float DoorOpenLightFactor = 3.4f;
         const float MinimumLightIntensity = 0.01f;
         const string HeatLightName = "FireHeat";
+        const float MinimumKeptHoursToShow = 0.05f;
 
         static readonly System.Collections.Generic.Dictionary<SteamSimulation, Light> s_HeatLights = new System.Collections.Generic.Dictionary<SteamSimulation, Light>();
 
@@ -24,7 +25,13 @@ namespace SteamRailway
             var simulationState = simulation.State;
             if (simulationState.Exploded) return Localizer.Translate("Ocak: kazan patlamış", "Firebox: the boiler has burst");
             if (simulationState.PlugBlown && SteamSimulation.Mode == Realism.Medium) return Localizer.Translate("Ocak: eriyen tapa erimiş, ocak yanmaz", "Firebox: the fusible plug has melted, it won't burn");
-            if (!simulation.FireBurning) return Localizer.Translate("Ocak: sönük", "Firebox: out");
+            if (!simulation.FireBurning)
+            {
+                float keptHours = simulationState.StoredBurnHours;
+                return keptHours >= MinimumKeptHoursToShow
+                    ? Localizer.Translate($"Ocak: sönük ({keptHours:0.0} saatlik kömür saklı)", $"Firebox: out ({keptHours:0.0} h of coal kept)")
+                    : Localizer.Translate("Ocak: sönük", "Firebox: out");
+            }
             float hours = simulation.Fire.GetRemainingLifeTimeHours();
             int wholeHours = Mathf.FloorToInt(hours), minutes = Mathf.FloorToInt((hours - wholeHours) * MinutesPerHour);
             return Localizer.Translate($"Ocak: {wholeHours} sa {minutes} dk", $"Firebox: {wholeHours} h {minutes} min");

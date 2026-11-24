@@ -34,6 +34,8 @@ namespace SteamRailway
         public float FireCoal { get; set; }                                        // obsolete (own coal fire)
         public float FireLevel { get; set; }                                       // 0 .. 1 how well the fire burns
         public bool FireLit { get; set; }
+        /// Game hours of coal that were left in the fire when the player put it out: added to the next fire (no coal burnt in vain).
+        public float StoredBurnHours { get; set; }
         public double LastGameHours { get; set; } = -1;
     }
 
@@ -106,7 +108,10 @@ namespace SteamRailway
 
         // --- motion (real seconds)
         public const float MaxSpeed = 15f;              // m/s
-        const float MaxTractionAccel = 0.8f;            // m/s² at full pressure and full regulator
+        // m/s² at full pressure and full regulator, standing. The region's lines climb up to about 13 % (the base game's own
+        // rails): at 2.0 m/s² the engine alone holds that grade at about 9 m/s and one wagon on still climbs 11 %.
+        const float MaxTractionAccel = 2.0f;
+        const float TractionSpeedFalloff = 0.4f;        // the pull is this much weaker at top speed (steam power does not grow with speed)
         /// The locomotive with its tender (the traction and brake figures are for it alone).
         public const float LocomotiveMassInKilograms = 70000f;
         const float RollingResistance = 0.05f;          // m/s²
@@ -275,6 +280,7 @@ namespace SteamRailway
             float target = 0f;
             if (FireBurning)
             {
+                if (!State.FireLit && State.StoredBurnHours > 0f) RestoreStoredFuel();
                 target = Mathf.Clamp01(Fire.GetCurrentTempIncrease() / FullFireTemp);
                 // Extra draft (blower, exhaust) burns the fuel faster.
                 if (draft > 1f) Fire.ReduceDurationByTODSeconds((draft - 1f) * minutes * SecondsPerMinute);
@@ -290,6 +296,27 @@ namespace SteamRailway
             if (FireBurning) Fire.TurnOff();
             State.FireLit = false;
             State.FireLevel = 0f;
+        }
+
+        const float MaximumStoredBurnHours = 24f;
+
+        /// The player shuts the damper: the fire goes out but the coal left in it is kept for the next light. Returns the
+        /// game hours kept in all.
+        public float PutOutFire()
+        {
+            float leftHours = FireBurning ? Mathf.Max(0f, Fire.GetRemainingLifeTimeHours()) : 0f;
+            State.StoredBurnHours = Mathf.Min(MaximumStoredBurnHours, State.StoredBurnHours + leftHours);
+            ExtinguishFire();
+            return State.StoredBurnHours;
+        }
+
+        /// A new fire has been lit: the coal kept from the last one burns on in it.
+        void RestoreStoredFuel()
+        {
+            float totalMinutes = (Fire.GetRemainingLifeTimeHours() + State.StoredBurnHours) * (float)MinutesPerHourExact;
+            Fire.ForceBurnTimeInMinutes(totalMinutes);
+            SteamRailwayMod.Debug($"Fire lit again: {State.StoredBurnHours:0.00} h of kept coal added, {Fire.GetRemainingLifeTimeHours():0.00} h in the fire now.");
+            State.StoredBurnHours = 0f;
         }
 
         // ------------------------------------------------------------------ failures
@@ -374,7 +401,8 @@ namespace SteamRailway
             if (deltaTime <= 0f) return;
             float acceleration = 0f;
 
-            float traction = MaxTractionAccel * State.Regulator * Mathf.Clamp01(Pressure / MaxPressure) * State.Reverser * MassShare;
+            float speedFactor = 1f - TractionSpeedFalloff * Mathf.Clamp01(Mathf.Abs(Velocity) / MaxSpeed);
+            float traction = MaxTractionAccel * speedFactor * State.Regulator * Mathf.Clamp01(Pressure / MaxPressure) * State.Reverser * MassShare;
             if (Pressure < TractionMinimumPressureInPsi) traction = 0f;
             acceleration += traction;
 

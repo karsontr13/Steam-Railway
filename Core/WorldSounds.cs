@@ -216,7 +216,7 @@ namespace SteamRailway
             var source = holder.AddComponent<AudioSource>();
             source.spatialBlend = 0f;
             source.playOnAwake = false;
-            source.PlayOneShot(Tinnitus, Mathf.Lerp(TinnitusMinimumVolume, TinnitusFullVolume, strength));
+            source.PlayOneShot(Tinnitus, Mathf.Lerp(TinnitusMinimumVolume, TinnitusFullVolume, strength) * GameVolume.Scale);
             Object.Destroy(holder, Tinnitus.length + 0.5f);
         }
 
@@ -234,7 +234,7 @@ namespace SteamRailway
             var source = SynthSounds.Source(holder, false, minimumDistance, maximumDistance);
             source.volume = 1f;
             source.pitch = pitch;
-            source.PlayOneShot(clip, volume);
+            source.PlayOneShot(clip, volume * GameVolume.Scale);
             Object.Destroy(holder, clip.length / Mathf.Max(MinimumPitchForLifetime, pitch) + OneShotLifetimeMarginInSeconds);
         }
 

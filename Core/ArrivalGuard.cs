@@ -1,36 +1,31 @@
-using Il2Cpp;
 using UnityEngine;
 
 namespace SteamRailway
 {
-    /// While a region loads, the player stands at the world's origin until the game puts them at the arrival point; left
-    /// to run there they fall freely and land on arrival with a sprain. They are held still until they arrive.
+    /// After walking through a rail transition, the player waits wherever the region loaded them until they are put at the
+    /// line's end; left to run they would fall and land with a sprain. They are held still only for that placement.
     internal static class ArrivalGuard
     {
-        /// The player stands further from the origin than this once the game has put them at the arrival point.
-        const float OriginRadiusInMeters = 5f;
-        /// A region whose arrival point lies at the origin: the hold ends this long after the load anyway.
-        const float MaximumHoldInSeconds = 60f;
+        /// The hold never outlasts this, whatever happens to the placement.
+        const float MaximumHoldInSeconds = 15f;
 
-        static bool s_Waiting;
-        static float s_LoadedAt;
+        static bool s_Holding;
+        static float s_HeldAt;
 
-        public static void SceneLoaded()
+        public static void Begin()
         {
-            s_Waiting = true;
-            s_LoadedAt = Time.realtimeSinceStartup;
+            s_Holding = true;
+            s_HeldAt = Time.realtimeSinceStartup;
         }
 
-        /// The player still waits at the origin for the arrival (the controller must not move them).
-        public static bool HoldingAtOrigin(Transform player)
+        public static void End() => s_Holding = false;
+
+        /// The player is being placed at a walking transition's end (the controller must not move them).
+        public static bool Holding()
         {
-            if (!s_Waiting) return false;
-            if (player.position.sqrMagnitude > OriginRadiusInMeters * OriginRadiusInMeters || Time.realtimeSinceStartup - s_LoadedAt > MaximumHoldInSeconds)
-            {
-                s_Waiting = false;
-                return false;
-            }
-            return true;
+            if (!s_Holding) return false;
+            if (Time.realtimeSinceStartup - s_HeldAt > MaximumHoldInSeconds) s_Holding = false;
+            return s_Holding;
         }
     }
 }

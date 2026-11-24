@@ -10,7 +10,6 @@ namespace SteamRailway
     {
         // scaring
         const float ScareRadiusMovingInMeters = 30f;
-        const float ScareRadiusStandingInMeters = 9f;
         const float MovingSpeedInMetersPerSecond = 0.5f;
         const float WhistleScareRadiusInMeters = 140f;
         // running over: the engine's swept box, in its own frame
@@ -58,7 +57,9 @@ namespace SteamRailway
             float speed = Mathf.Abs(liveTrain.Simulation.Velocity);
             bool moving = speed > MovingSpeedInMetersPerSecond;
             bool whistling = liveTrain.Train.m_SteamWhistleOpen;
-            float scareRadius = whistling ? WhistleScareRadiusInMeters : moving ? ScareRadiusMovingInMeters : ScareRadiusStandingInMeters;
+            // a standing, quiet engine does not frighten anything (a hunting wolf keeps its eyes on the player)
+            if (!moving && !whistling) return;
+            float scareRadius = whistling ? WhistleScareRadiusInMeters : ScareRadiusMovingInMeters;
             float front = liveTrain.BodyFrontInMeters > 0f ? liveTrain.BodyFrontInMeters : DefaultBodyFrontInMeters;
             float rear = liveTrain.BodyRearInMeters > 0f ? liveTrain.BodyRearInMeters : DefaultBodyRearInMeters;
             for (int index = 0; index < s_Animals.Count; index++)

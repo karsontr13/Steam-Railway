@@ -252,6 +252,7 @@ namespace SteamRailway
                 s_WorkSoundSource.volume = WorkSoundVolume;
             }
             s_WorkSoundHolder.transform.position = s_Site.transform.position + Vector3.up;
+            s_WorkSoundSource.volume = WorkSoundVolume * GameVolume.Scale;
             if (!s_WorkSoundSource.isPlaying) s_WorkSoundSource.Play();
         }
 

@@ -1,4 +1,4 @@
-using Il2Cpp;
+﻿using Il2Cpp;
 using Il2CppTLD.SteamTrain;
 using UnityEngine;
 
@@ -12,7 +12,7 @@ namespace SteamRailway
         const int TimedStopFadeInMilliseconds = 300;
         static readonly Vector3 CabEmitterPosition = new Vector3(0f, 2.6f, -2.6f);
         static readonly Vector3 DoorEmitterPosition = new Vector3(1.5f, 2.4f, -2.35f);
-        internal static readonly Vector3 BoilerEmitterPosition = BoilerEmitterPosition;
+        internal static readonly Vector3 BoilerEmitterPosition = new Vector3(0f, 3.2f, 0.5f);
 
         // One-shots
         public const string PourWater = "PLAY_PUTINPOTWATER";
@@ -151,11 +151,11 @@ namespace SteamRailway
         const float RailLength = 12.5f;                 // m between rail joints
         static readonly float[] AxleOffsets = { 0f, 1.65f, 3.3f, 7.6f, 8.35f };   // driving axles, then pony wheels
         const float WhistleVolume = 0.9f;
-        static readonly Vector3 ValveEmitterPosition = ValveEmitterPosition;
+        static readonly Vector3 ValveEmitterPosition = new Vector3(0f, 4.05f, -1.25f);
         static readonly Vector3 WheelsEmitterPosition = new Vector3(0f, 0.6f, 0f);
-        static readonly Vector3 WhistleEmitterPosition = WhistleEmitterPosition;
+        static readonly Vector3 WhistleEmitterPosition = new Vector3(0.35f, 4.0f, -1.45f);
         static readonly Vector3 TrainEmitterPosition = new Vector3(0f, 2.2f, 0f);
-        static readonly Vector3 SecondWheelsEmitterPosition = SecondWheelsEmitterPosition;
+        static readonly Vector3 SecondWheelsEmitterPosition = new Vector3(0f, 0.6f, -2.5f);
         const float RumbleMinimumDistanceInMeters = 8f;
         const float RumbleMaximumDistanceInMeters = 140f;
         const float ClackMinimumDistanceInMeters = 4f;
@@ -340,9 +340,10 @@ namespace SteamRailway
             }
         }
 
+        /// The mod's own loops follow the game's master and sound-effect volume (GameVolume).
         static void Fade(AudioSource source, float target, float step)
         {
-            source.volume = Mathf.MoveTowards(source.volume, target, step);
+            source.volume = Mathf.MoveTowards(source.volume, target * GameVolume.Scale, step);
             if (source.volume > AudibleVolume && !source.isPlaying) source.Play();
             else if (source.volume <= AudibleVolume && source.isPlaying) source.Stop();
         }
@@ -354,7 +355,7 @@ namespace SteamRailway
             bool braking = (simulation.State.SteamBrake && simulation.Pressure >= BrakeSquealMinimumPressureInPsi) || simulation.State.HandBrake;
             float scale = Mathf.Clamp01(speed / BrakeSquealFullSpeedInMetersPerSecond);
             float target = braking && speed > BrakeSquealMinimumSpeedInMetersPerSecond ? Mathf.Lerp(BrakeSquealVolumeMinimum, BrakeSquealVolumeMaximum, scale) : 0f;
-            Fade(m_Brake, target, deltaTime * (target > m_Brake.volume ? BrakeSquealRiseRate : BrakeSquealFallRate));
+            Fade(m_Brake, target, deltaTime * (target * GameVolume.Scale > m_Brake.volume ? BrakeSquealRiseRate : BrakeSquealFallRate));
             m_Brake.pitch = Mathf.Lerp(BrakeSquealPitchMinimum, BrakeSquealPitchMaximum, scale);
         }
 
@@ -391,7 +392,7 @@ namespace SteamRailway
                 if (m_PendingClacks[index] > 0f) continue;
                 m_PendingClacks.RemoveAt(index);
                 m_Clack.pitch = Random.Range(ClackPitchSpreadMinimum, ClackPitchSpreadMaximum) * Mathf.Lerp(ClackPitchBySpeedMinimum, ClackPitchBySpeedMaximum, scale);
-                m_Clack.PlayOneShot(SynthSounds.Clack, Mathf.Lerp(ClackVolumeMinimum, ClackVolumeMaximum, scale) * Random.Range(ClackVolumeSpreadMinimum, 1f));
+                m_Clack.PlayOneShot(SynthSounds.Clack, Mathf.Lerp(ClackVolumeMinimum, ClackVolumeMaximum, scale) * Random.Range(ClackVolumeSpreadMinimum, 1f) * GameVolume.Scale);
             }
         }
 
@@ -401,13 +402,13 @@ namespace SteamRailway
             if (m_RealWhistle)
             {
                 // The recorded toot is played whole each time the cord is pulled.
-                if (open && !m_WhistleWasOpen) { m_Whistle.volume = WhistleVolume; m_Whistle.pitch = 1f; m_Whistle.Play(); }
+                if (open && !m_WhistleWasOpen) { m_Whistle.volume = WhistleVolume * GameVolume.Scale; m_Whistle.pitch = 1f; m_Whistle.Play(); }
                 m_WhistleWasOpen = open;
                 return;
             }
             // Quick attack, slightly slower release, like a real valve letting go.
             m_WhistleLevel = Mathf.MoveTowards(m_WhistleLevel, open ? 1f : 0f, deltaTime * (open ? WhistleAttackRate : WhistleReleaseRate));
-            m_Whistle.volume = m_WhistleLevel * WhistleVolume;
+            m_Whistle.volume = m_WhistleLevel * WhistleVolume * GameVolume.Scale;
             m_Whistle.pitch = WhistlePitchBase + WhistlePitchRise * m_WhistleLevel;   // the pitch rises as the valve opens
             if (m_WhistleLevel > 0f && !m_Whistle.isPlaying) m_Whistle.Play();
             else if (m_WhistleLevel <= 0f && m_Whistle.isPlaying) m_Whistle.Stop();

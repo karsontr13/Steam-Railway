@@ -1,7 +1,7 @@
 using MelonLoader;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(SteamRailway.SteamRailwayMod), "SteamRailway", "0.1.0", "Hamsi Buglama")]
+[assembly: MelonInfo(typeof(SteamRailway.SteamRailwayMod), "SteamRailway", "0.1.1", "Hamsi Buglama")]
 [assembly: MelonGame("Hinterland", "TheLongDark")]
 // The in-game settings page needs ModSettings; without it the mod runs on its preferences file alone.
 [assembly: MelonOptionalDependencies("ModSettings")]
@@ -22,6 +22,7 @@ namespace SteamRailway
         static MelonPreferences_Entry<string> s_Realism;
         static MelonPreferences_Entry<string> s_Difficulty;
         static MelonPreferences_Entry<bool> s_DeveloperTools;
+        static MelonPreferences_Entry<bool> s_Tinnitus;
 
         internal const string SimpleRealismName = "Simple";
         internal const string MediumRealismName = "Medium";
@@ -36,12 +37,15 @@ namespace SteamRailway
         public static bool DeveloperToolsEnabled => s_DeveloperTools != null && s_DeveloperTools.Value;
         public static bool EditorEnabled => s_EditorEnabled != null && s_EditorEnabled.Value;
         public static bool Verbose => s_Verbose != null && s_Verbose.Value;
+        /// The ringing in the ears after a blast close by (some players find it unpleasant).
+        public static bool TinnitusEnabled => s_Tinnitus == null || s_Tinnitus.Value;
         /// The F11 editors (object, track, terrain, obstacle). The saved edits are played back either way.
         public static bool ObjectEditorEnabled => s_ObjectEditor != null && s_ObjectEditor.Value;
 
         /// The settings page was confirmed: its values go into the preference entries.
-        internal static void ApplySettings(bool enabled, string realism, string difficulty, bool editors, bool developerTools, bool verbose)
+        internal static void ApplySettings(bool enabled, string realism, string difficulty, bool editors, bool developerTools, bool verbose, bool tinnitus)
         {
+            Set(s_Tinnitus, tinnitus);
             Set(s_Enabled, enabled);
             Set(s_Realism, realism);
             Set(s_Difficulty, difficulty);
@@ -71,6 +75,8 @@ namespace SteamRailway
             s_EditorEnabled = s_Cat.CreateEntry("RouteEditor", false, "Route editor",
                 "F8 add point, F7 remove last point, F6 start a new route, F9 rebuild this scene, F10 save routes.json.");
             s_Verbose = s_Cat.CreateEntry("Verbose", false, "Verbose logging");
+            s_Tinnitus = s_Cat.CreateEntry("Tinnitus", true, "Ear ringing after a blast",
+                "A blast close by makes the ears ring. Turn off if the sound bothers you.");
             s_ObjectEditor = s_Cat.CreateEntry("ObjectEditor", false, "Editors",
                 "F11 goes round the object, track, terrain and obstacle editors. Edits are kept in Mods/SteamRailway. Leave off for normal play.");
             s_Realism = s_Cat.CreateEntry("Realism", MediumRealismName, "Realism",
@@ -108,7 +114,6 @@ namespace SteamRailway
         public override void OnSceneWasInitialized(int buildIndex, string sceneName)
         {
             if (!Enabled) return;
-            ArrivalGuard.SceneLoaded();
             RailwayManager.OnSceneInitialized(sceneName);
         }
 
@@ -120,6 +125,7 @@ namespace SteamRailway
         public override void OnUpdate()
         {
             if (!Enabled) return;
+            GameVolume.Update();
             RailwayManager.Update();
             if (DeveloperToolsEnabled) DeveloperTools.Update();
             if (EditorEnabled) RouteEditor.Update();

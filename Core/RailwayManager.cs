@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -96,7 +96,8 @@ namespace SteamRailway
         public bool Boarding;                // BoardAfterArrival is running
         public float AwaySince = -1f;        // realtime the player was first seen outside the cab while "inside"
         public int Reboards;
-        public Transform MeasuredModel;      // the model the body reach below was measured on (rebuilt models are measured again)
+        public float DoorStuckSince = -1f;   // realtime the door was first seen "in use" with no fade running
+        public Transform MeasuredModel;     // the model the body reach below was measured on (rebuilt models are measured again)
         public float BodyFrontInMeters, BodyRearInMeters;   // how far the model reaches from the pivot, forward and backward (world metres)
         // The wagon coupler shown locked into the engine's at each end (CouplerPartner_*), and how far from the pivot its far
         // end lies (world metres): a coupled wagon's own coupler is hidden and the wagon stands where that copy mounts.
@@ -562,6 +563,7 @@ namespace SteamRailway
         static void WalkTransit(WalkPortal walkPortal)
         {
             s_Transiting = true;
+            ArrivalGuard.Begin();
             s_WalkToScene = walkPortal.There.Scene;
             s_WalkToPosition = CustomLines.ToVector3(walkPortal.There.Position);
             var outwardDirection = CustomLines.ToVector3(walkPortal.There.Out); outwardDirection.y = 0f;
@@ -578,11 +580,23 @@ namespace SteamRailway
                 SteamRailwayMod.Log.Error($"Region transition failed: {exception.Message}");
                 s_Transiting = false;
                 s_WalkToScene = null;
+                ArrivalGuard.End();
             }
         }
 
         /// The game puts the player at a spawn point of the region; they are moved to the transition's end.
         static IEnumerator PlaceWalker(Vector3 position, Vector3 direction)
+        {
+            // the player is held still from the transition until placed (see ArrivalGuard), however the placement ends
+            try
+            {
+                var placement = PlaceWalkerSteps(position, direction);
+                while (placement.MoveNext()) yield return placement.Current;
+            }
+            finally { ArrivalGuard.End(); }
+        }
+
+        static IEnumerator PlaceWalkerSteps(Vector3 position, Vector3 direction)
         {
             float start = Time.realtimeSinceStartup;
             var sourceObject = GameManager.GetPlayerObject();
@@ -1171,6 +1185,26 @@ namespace SteamRailway
             if (!PlayerInCab(liveTrain.Train)) liveTrain.Simulation.RestoreMotion(0f);
         }
 
+        /// A fade that never ends (the player was attacked while the door opened) leaves the door "in use": the door then
+        /// refuses everyone. With no fade running for this long, the door is let go.
+        const float DoorStuckSeconds = 4f;
+
+        static void ReleaseStuckDoor(LiveTrain liveTrain)
+        {
+            var train = liveTrain.Train;
+            if (train == null || liveTrain.Boarding || s_Transiting) { liveTrain.DoorStuckSince = -1f; return; }
+            bool fading = false;
+            try { fading = CameraFade.IsFadingIn || CameraFade.IsFadingOut || CameraFade.IsFadedOut; } catch { }
+            if (fading || !(train.m_PlayerUsingDoor || (!train.IsInsideTrain && train.m_PendingEnterTrain))) { liveTrain.DoorStuckSince = -1f; return; }
+            float now = Time.realtimeSinceStartup;
+            if (liveTrain.DoorStuckSince < 0f) { liveTrain.DoorStuckSince = now; return; }
+            if (now - liveTrain.DoorStuckSince < DoorStuckSeconds) return;
+            liveTrain.DoorStuckSince = -1f;
+            SteamRailwayMod.Log.Warning("The cab door was left in use by an interrupted boarding: letting it go.");
+            train.m_PlayerUsingDoor = false;
+            train.m_PendingEnterTrain = false;
+        }
+
         /// The game thinks the player is in the cab but they stand elsewhere: take them aboard again,
         /// or after repeated failures let them out and stop the train.
         static void GuardCab(LiveTrain liveTrain)
@@ -1577,7 +1611,7 @@ namespace SteamRailway
                 for (int index = 0; index < s_Trains.Count; index++) CheckPortals(s_Trains[index]);
             for (int index = 0; index < s_Trains.Count; index++)
             {
-                try { GuardCab(s_Trains[index]); }
+                try { GuardCab(s_Trains[index]); ReleaseStuckDoor(s_Trains[index]); }
                 catch (System.Exception exception) { LogUpdateFailure("Cab guard", exception); }
             }
             if (Time.time >= s_NextHover)
@@ -1596,7 +1630,7 @@ namespace SteamRailway
             foreach (var liveTrain in s_Trains) KeepExitPointOnGround(liveTrain.Train);
         }
 
-        static BuiltTrack FindTrack(string identifier)
+        internal static BuiltTrack FindTrack(string identifier)
         {
             for (int index = 0; index < s_Tracks.Count; index++)
                 if (s_Tracks[index].Identifier == identifier) return s_Tracks[index];
