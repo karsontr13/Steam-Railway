@@ -133,12 +133,19 @@ namespace SteamRailway
             return Localizer.Translate("Geçiş silindi.", "Transition deleted.");
         }
 
-        /// A transition object of the game's kind for the scene load (copied from one the region has, so the game
-        /// saves and loads the regions its own way), aimed at the other region.
-        public static LoadScene MakeLoadScene(string toScene, string spawn)
+        const string RegionSceneSuffix = "Region";
+
+        /// The game's own transition to that region, used as it is where there is one (the game then saves and loads as when
+        /// it is walked through); else a copy of another region transition aimed there. Never a door: its load is an interior's.
+        public static LoadScene TransitionTo(string toScene, string spawn)
         {
             LoadScene sourceLoadScene = null;
-            foreach (var loadScene in Object.FindObjectsOfType<LoadScene>()) if (loadScene != null) { sourceLoadScene = loadScene; break; }
+            foreach (var loadScene in Object.FindObjectsOfType<LoadScene>())
+            {
+                if (loadScene == null || !loadScene.m_TransitionOnContact || string.IsNullOrEmpty(loadScene.m_SceneToLoad)) continue;
+                if (loadScene.m_SceneToLoad == toScene) return loadScene;
+                if (sourceLoadScene == null && loadScene.m_SceneToLoad.EndsWith(RegionSceneSuffix, System.StringComparison.Ordinal)) sourceLoadScene = loadScene;
+            }
             if (sourceLoadScene == null) return null;
             var targetObject = Object.Instantiate(sourceLoadScene.gameObject);
             targetObject.name = "SR_PortalLoad_" + toScene;

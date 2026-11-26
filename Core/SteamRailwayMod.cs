@@ -1,7 +1,7 @@
 using MelonLoader;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(SteamRailway.SteamRailwayMod), "SteamRailway", "0.1.1", "Hamsi Buglama")]
+[assembly: MelonInfo(typeof(SteamRailway.SteamRailwayMod), "SteamRailway", "0.1.2", "Hamsi Buglama")]
 [assembly: MelonGame("Hinterland", "TheLongDark")]
 // The in-game settings page needs ModSettings; without it the mod runs on its preferences file alone.
 [assembly: MelonOptionalDependencies("ModSettings")]

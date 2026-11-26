@@ -571,7 +571,7 @@ namespace SteamRailway
             SteamRailwayMod.Log.Msg($"On foot through the rail transition to {walkPortal.There.Scene}.");
             try
             {
-                var loadScene = CustomPortals.MakeLoadScene(walkPortal.There.Scene, walkPortal.There.Spawn);
+                var loadScene = CustomPortals.TransitionTo(walkPortal.There.Scene, walkPortal.There.Spawn);
                 if (loadScene == null) throw new System.Exception("no transition object to copy in this region");
                 loadScene.Activate(true);
             }
@@ -1024,7 +1024,7 @@ namespace SteamRailway
             s_Departing = liveTrain;
             try
             {
-                var loadScene = portal.LoadSceneComponent != null ? portal.LoadSceneComponent : CustomPortals.MakeLoadScene(portal.DestinationScene, portal.Spawn);
+                var loadScene = portal.LoadSceneComponent != null ? portal.LoadSceneComponent : CustomPortals.TransitionTo(portal.DestinationScene, portal.Spawn);
                 if (loadScene == null) throw new System.Exception("no transition object to copy in this region");
                 loadScene.Activate(true);
             }
